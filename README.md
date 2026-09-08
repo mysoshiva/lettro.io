@@ -1,4 +1,4 @@
-
+![Description of image](lettro-logo.svg)
 
 # Lettro
 
