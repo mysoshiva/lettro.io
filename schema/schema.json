@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LettroLetterAnalysis",
+  "type": "object",
+  "required": [
+    "detected_language",
+    "sender",
+    "letter_type",
+    "requires_action",
+    "summary",
+    "deadline",
+    "required_actions",
+    "overall_confidence"
+  ],
+  "properties": {
+    "detected_language": {
+      "type": "string",
+      "description": "BCP-47 code of the language the original letter was written in, e.g. 'de'."
+    },
+    "sender": {
+      "type": "string",
+      "description": "Who sent the letter (organization or authority name)."
+    },
+    "letter_type": {
+      "type": "string",
+      "description": "Short category, e.g. 'vehicle registration notice', 'traffic fine questionnaire', 'promotional offer'."
+    },
+    "requires_action": {
+      "type": "boolean",
+      "description": "Whether the recipient must actually do something in response to this letter."
+    },
+    "summary": {
+      "type": "string",
+      "description": "1-3 sentence plain-language explanation of what the letter is and why it was sent, written in the reader's chosen language."
+    },
+    "deadline": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": ["string", "null"],
+          "description": "Absolute date in YYYY-MM-DD if the letter states one; null if the deadline is relative or absent."
+        },
+        "raw_text": {
+          "type": ["string", "null"],
+          "description": "The letter's own wording for the deadline, e.g. 'within one week of receipt'."
+        },
+        "is_relative_to_receipt": {
+          "type": "boolean",
+          "description": "True if the deadline is counted from when the reader receives or opens the letter, rather than a fixed calendar date."
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["high", "medium", "low"]
+        }
+      }
+    },
+    "required_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "action": { "type": "string" },
+          "confidence": { "type": "string", "enum": ["high", "medium", "low"] }
+        }
+      }
+    },
+    "consequences_if_missed": {
+      "type": ["string", "null"],
+      "description": "What the letter explicitly states will happen if no action is taken; null if not stated."
+    },
+    "overall_confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"]
+    }
+  }
+}
