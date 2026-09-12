@@ -1,10 +1,14 @@
+from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 import io
 import json
 import os
 import re
 import sqlite3
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Optional
 
 import requests
@@ -159,7 +163,6 @@ def analyze_with_llm(prompt: str) -> dict[str, Any]:
             "messages": [
                 {"role": "user", "content": prompt},
             ],
-            "temperature": 0,
         },
         timeout=60,
     )
@@ -201,6 +204,7 @@ async def run_sample(payload: dict[str, str]):
         sanitized = redact_text(sample_text)
         prompt = build_prompt(target_language, sanitized)
         analysis = analyze_with_llm(prompt)
+        print("RAW LLM OUTPUT (/run_sample):", json.dumps(analysis, indent=2, ensure_ascii=False))  # temporary debug line
 
         if not isinstance(analysis, dict):
             raise HTTPException(status_code=422, detail="LLM returned a non-object response.")
@@ -221,6 +225,7 @@ async def analyze(request: AnalysisRequest):
         sanitized_text = redact_text(request.text)
         prompt = build_prompt(request.target_language, sanitized_text)
         analysis = analyze_with_llm(prompt)
+        print("RAW LLM OUTPUT (/analyze):", json.dumps(analysis, indent=2, ensure_ascii=False))  # temporary debug line
 
         if not isinstance(analysis, dict):
             raise HTTPException(status_code=422, detail="LLM returned a non-object response.")
