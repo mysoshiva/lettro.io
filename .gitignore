@@ -1,0 +1,14 @@
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local env and data
+.env
+.env.*
+!.env.example
+lettro.db
+*.sqlite3
+
+# OS/editor noise
+.DS_Store

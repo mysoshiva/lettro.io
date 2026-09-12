@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lettro | Understand official letters</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="brand-header container">
+      <div class="brand-block">
+        <img src="../lettro-logo.svg" alt="Lettro logo" class="brand-logo">
+        <div>
+          <p class="eyebrow">Official letters, simplified</p>
+          <h1>Lettro</h1>
+        </div>
+      </div>
+      <p class="subtitle">Upload a letter, scan it, and get a plain-language explanation in your language.</p>
+    </header>
+
+    <main class="container app-grid">
+      <section class="panel left-panel">
+        <div class="panel-header">
+          <h2>1. Upload a letter</h2>
+        </div>
+
+        <label class="upload-area" for="letterUpload">
+          <input type="file" id="letterUpload" accept="image/*">
+          <span>Choose an image or drag one here</span>
+        </label>
+
+        <div class="button-row">
+          <button id="captureBtn" class="btn btn-primary">Use Camera</button>
+          <button id="scanBtn" class="btn btn-success">Scan Letter</button>
+        </div>
+
+        <div id="imagePreview" class="image-preview"></div>
+
+        <div class="panel-header mt-4">
+          <h2>2. Choose language</h2>
+        </div>
+        <select id="targetLanguage" class="form-select">
+          <option value="en">English</option>
+          <option value="de">German</option>
+          <option value="fr">French</option>
+          <option value="es">Spanish</option>
+        </select>
+
+        <div class="panel-header mt-4">
+          <h2>3. Try local sample letters</h2>
+        </div>
+        <div class="sample-row">
+          <select id="sampleLetterSelect" class="form-select"></select>
+          <button id="runSampleBtn" class="btn btn-outline-primary">Run sample</button>
+        </div>
+      </section>
+
+      <section class="panel right-panel">
+        <div class="panel-header">
+          <h2>Results</h2>
+        </div>
+        <div id="results" class="results-box">
+          <p>Upload a letter or run a local sample to see the explanation here.</p>
+        </div>
+
+        <div class="history-wrap mt-4">
+          <button id="historyBtn" class="btn btn-info w-100">View History</button>
+          <div id="historyDiv" class="mt-3" style="display: none;">
+            <h3>Scan History</h3>
+            <div id="historyList"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
