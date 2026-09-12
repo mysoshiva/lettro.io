@@ -7,15 +7,16 @@ Respond with a **single JSON object** matching the schema in `schema-v2.json` ex
 
 ## Rules
 1. **Language Detection**: Detect the letter's original language and record it in `detected_language` (BCP-47 code, e.g., `de` for German).
-2. **Translation**: Write `summary`, every `required_actions[].action`, and `consequences_if_missed` in the reader's chosen language, provided as `{{target_language}}`.
-3. **Deadlines**:
+2. **Output shape**: Return a single JSON object exactly matching `schema-v2.json`. `sender` must be a single string or `null`, not an object; `letter_type` must also be a single string or `null`; `deadline.date` must be a `YYYY-MM-DD` string or `null`; each `required_actions[]` item must only contain `action` and `confidence`, with no extra keys like `priority`.
+3. **Translation**: Write `summary`, every `required_actions[].action`, and `consequences_if_missed` in the reader's chosen language, provided as `{{target_language}}`.
+4. **Deadlines**:
    - If the deadline is a **fixed date** (e.g., "October 15, 2026"), set `deadline.date` to the date in `YYYY-MM-DD` format and `deadline.is_relative_to_receipt` to `false`.
    - If the deadline is **relative** (e.g., "within 14 days of receipt"), set `deadline.date` to `null`, `deadline.is_relative_to_receipt` to `true`, and preserve the exact phrasing in `deadline.raw_text`.
    - If no deadline is mentioned, set all deadline fields to `null` and `deadline.confidence` to `"low"`.
-4. **No Action Letters**: If the letter is purely informational (e.g., promotional, no action required), set `requires_action` to `false` and `required_actions` to an empty array.
-5. **Fact Accuracy**: Never invent information. If a field cannot be determined, use `null` and set its `confidence` to `"low"`.
-6. **Consequences**: Only include what the letter explicitly states will happen if no action is taken. Use `null` if not stated.
-7. **Confidence Scoring**:
+5. **No Action Letters**: If the letter is purely informational (e.g., promotional, no action required), set `requires_action` to `false` and `required_actions` to an empty array.
+6. **Fact Accuracy**: Never invent information. If a field cannot be determined, use `null` and set its `confidence` to `"low"`.
+7. **Consequences**: Only include what the letter explicitly states will happen if no action is taken. Use `null` if not stated.
+8. **Confidence Scoring**:
    - `overall_confidence`: Reflects your confidence in the **entire extraction**, not an average of individual fields.
    - Use `"high"` if all key fields (sender, deadline, actions) are clear and unambiguous.
    - Use `"medium"` if some fields are ambiguous or missing.

@@ -48,12 +48,36 @@ cd /workspaces/lettro.io
 cp .env.example .env
 ```
 
-Then add a real API key and model:
+Then choose your provider and set the matching API key:
 
 ```env
-OPENAI_API_KEY=your_api_key_here
+LLM_PROVIDER=anthropic
+
+OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
+
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+ANTHROPIC_BASE_URL=https://api.anthropic.com
+ANTHROPIC_MODEL=claude-opus-5
+```
+
+If you already have an Anthropic key, set `LLM_PROVIDER=anthropic` and use your Anthropic key. If you prefer OpenAI-compatible providers, keep `LLM_PROVIDER=openai` and populate `OPENAI_API_KEY` instead.
+
+#### How to test with Anthropic
+
+1. Set `LLM_PROVIDER=anthropic` in [.env](.env)
+2. Put your Anthropic key in `ANTHROPIC_API_KEY`
+3. Keep `ANTHROPIC_BASE_URL=https://api.anthropic.com`
+4. Use a valid model ID such as `claude-opus-5`
+5. Start the backend and call the sample endpoint:
+
+```bash
+cd /workspaces/lettro.io
+python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+curl -X POST http://localhost:8000/run_sample \
+  -H 'Content-Type: application/json' \
+  -d '{"filename":"01-stadt-heilbronn-kfz-adresse.md","target_language":"en"}'
 ```
 
 > The `.env` file is local-only and should never be committed.
