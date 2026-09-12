@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LettroLetterAnalysis",
+  "type": "object",
+  "required": [
+    "detected_language",
+    "sender",
+    "letter_type",
+    "requires_action",
+    "summary",
+    "deadline",
+    "required_actions",
+    "consequences_if_missed",
+    "overall_confidence"
+  ],
+  "properties": {
+    "detected_language": {
+      "type": "string",
+      "description": "BCP-47 code of the language the original letter was written in, e.g., 'de' for German."
+    },
+    "sender": {
+      "type": ["string", "null"],
+      "description": "Who sent the letter (organization or authority name). Use `null` if unknown."
+    },
+    "letter_type": {
+      "type": ["string", "null"],
+      "description": "Short category, e.g., 'tax notice', 'eviction warning', 'promotional offer'. Use `null` if unknown."
+    },
+    "requires_action": {
+      "type": "boolean",
+      "description": "Whether the recipient must take action in response to this letter."
+    },
+    "summary": {
+      "type": "string",
+      "description": "1-3 sentence plain-language explanation of what the letter is and why it was sent, written in the reader's chosen language."
+    },
+    "deadline": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": ["string", "null"],
+          "description": "Absolute date in YYYY-MM-DD format if the letter states one; `null` if the deadline is relative or absent."
+        },
+        "raw_text": {
+          "type": ["string", "null"],
+          "description": "The letter's exact wording for the deadline, e.g., 'within 14 days of receipt'."
+        },
+        "is_relative_to_receipt": {
+          "type": "boolean",
+          "description": "True if the deadline is counted from when the reader receives the letter; false if it's a fixed date."
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "description": "Confidence in the deadline extraction."
+        }
+      },
+      "required": ["date", "raw_text", "is_relative_to_receipt", "confidence"]
+    },
+    "required_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "The action the recipient must take, written in the target language."
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"],
+            "description": "Confidence in the action extraction."
+          }
+        },
+        "required": ["action", "confidence"]
+      },
+      "description": "List of actions the recipient must take. Empty array if no action is required."
+    },
+    "consequences_if_missed": {
+      "type": ["string", "null"],
+      "description": "What the letter explicitly states will happen if no action is taken; `null` if not stated."
+    },
+    "overall_confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"],
+      "description": "Overall confidence in the extraction."
+    }
+  }
