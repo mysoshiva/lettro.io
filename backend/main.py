@@ -190,8 +190,7 @@ def detect_document_type(filename: str, content_type: Optional[str] = None) -> s
     return "image"
 
 
-async def extract_text_from_image(file: UploadFile) -> str:
-    contents = await file.read()
+async def extract_text_from_image(contents: bytes) -> str:
     if not contents:
         raise ValueError("Uploaded file is empty.")
 
@@ -230,7 +229,7 @@ async def extract_text_from_document(file: UploadFile) -> str:
             raise ValueError("Could not extract any readable text from the uploaded PDF.")
         return text
 
-    return await extract_text_from_image(file)
+    return await extract_text_from_image(contents)
 
 
 def extract_json_from_llm_response(raw_response: str) -> dict[str, Any]:

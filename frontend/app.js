@@ -1,6 +1,6 @@
 function renderAnalysis(analysis) {
   const resultsDiv = document.getElementById("results");
-  const actionTag = analysis.requires_action ? 'success' : 'warning';
+  const actionTag = analysis.requires_action ? 'action' : 'clear';
   const actionLabel = analysis.requires_action ? 'Action required' : 'No action required';
 
   const deadlineText = analysis.deadline && analysis.deadline.date
@@ -233,11 +233,17 @@ document.getElementById("historyBtn").addEventListener("click", async () => {
     data.history.forEach((scan) => {
       const scanDiv = document.createElement("div");
       scanDiv.className = "card mb-2";
+      let formattedAnalysis = scan.analysis;
+      try {
+        formattedAnalysis = JSON.stringify(JSON.parse(scan.analysis), null, 2);
+      } catch (e) {
+        // leave as-is if it isn't valid JSON
+      }
       scanDiv.innerHTML = `
         <div class="card-body">
           <h5>Scan #${scan.id} (${scan.timestamp})</h5>
           <p><strong>Language:</strong> ${scan.target_language}</p>
-          <pre>${scan.analysis}</pre>
+          <pre>${formattedAnalysis}</pre>
         </div>
       `;
       historyList.appendChild(scanDiv);
