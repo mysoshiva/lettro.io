@@ -27,8 +27,9 @@
         </div>
 
         <label class="upload-area" for="letterUpload">
-          <input type="file" id="letterUpload" accept="image/*">
-          <span>Choose an image or drag one here</span>
+          <input type="file" id="letterUpload" accept="image/*,.pdf">
+          <span class="upload-title">Choose a file</span>
+          <small>Images or PDFs supported</small>
         </label>
 
         <div class="button-row">
@@ -36,7 +37,12 @@
           <button id="scanBtn" class="btn btn-success">Scan Letter</button>
         </div>
 
-        <div id="imagePreview" class="image-preview"></div>
+        <div id="imagePreview" class="image-preview empty-state">
+          <div class="placeholder-copy">
+            <strong>No document selected</strong>
+            <span>PNG, JPG, or PDF</span>
+          </div>
+        </div>
 
         <div class="panel-header mt-4">
           <h2>2. Choose language</h2>
@@ -58,8 +64,9 @@
       </section>
 
       <section class="panel right-panel">
-        <div class="panel-header">
+        <div class="panel-header result-panel-header">
           <h2>Results</h2>
+          <span class="result-badge">Plain-language summary</span>
         </div>
         <div id="results" class="results-box">
           <p>Upload a letter or run a local sample to see the explanation here.</p>

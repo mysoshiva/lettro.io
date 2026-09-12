@@ -44,6 +44,35 @@ function renderAnalysis(analysis) {
   `;
 }
 
+function renderSelectedFile(file) {
+  const preview = document.getElementById("imagePreview");
+  if (!file) {
+    preview.className = 'image-preview empty-state';
+    preview.innerHTML = `
+      <div class="placeholder-copy">
+        <strong>No document selected</strong>
+        <span>PNG, JPG, or PDF</span>
+      </div>
+    `;
+    return;
+  }
+
+  const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+  preview.className = 'image-preview';
+
+  if (isPdf) {
+    preview.innerHTML = `
+      <div class="file-card">
+        <span class="file-type">PDF</span>
+        <p class="file-name">${file.name}</p>
+      </div>
+    `;
+    return;
+  }
+
+  preview.innerHTML = `<img src="${URL.createObjectURL(file)}" class="img-fluid" alt="Selected letter preview" />`;
+}
+
 async function loadSampleLetters() {
   const select = document.getElementById('sampleLetterSelect');
   try {
@@ -64,8 +93,7 @@ async function loadSampleLetters() {
 document.getElementById("letterUpload").addEventListener("change", (event) => {
   const file = event.target.files[0];
   if (!file) return;
-  const imagePreview = document.getElementById("imagePreview");
-  imagePreview.innerHTML = `<img src="${URL.createObjectURL(file)}" class="img-fluid" />`;
+  renderSelectedFile(file);
 });
 
 document.getElementById("scanBtn").addEventListener("click", async () => {
@@ -82,7 +110,7 @@ document.getElementById("scanBtn").addEventListener("click", async () => {
 
   try {
     const formData = new FormData();
-    formData.append("image", file);
+    formData.append("file", file);
 
     const ocrResponse = await fetch("http://localhost:8000/ocr", {
       method: "POST",
@@ -180,7 +208,7 @@ document.getElementById("captureBtn").addEventListener("click", async () => {
         const file = new File([blob], "captured-image.jpg", { type: "image/jpeg" });
         const fileInput = document.getElementById("letterUpload");
         fileInput.files = [file];
-        imagePreview.innerHTML = `<img src="${URL.createObjectURL(file)}" class="img-fluid" />`;
+        renderSelectedFile(file);
       }, "image/jpeg");
     });
 

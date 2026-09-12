@@ -1,8 +1,19 @@
+import asyncio
+import io
 import json
+from types import SimpleNamespace
 
 import pytest
 
-from backend.main import build_prompt, get_llm_config, normalize_analysis_payload, redact_text, validate_analysis
+from backend.main import (
+    build_prompt,
+    detect_document_type,
+    extract_text_from_document,
+    get_llm_config,
+    normalize_analysis_payload,
+    redact_text,
+    validate_analysis,
+)
 
 
 @pytest.mark.parametrize(
@@ -156,3 +167,42 @@ def test_analyze_with_llm_handles_anthropic_thinking_block(monkeypatch):
 
     assert result["detected_language"] == "en"
     assert result["summary"] == "This is a valid summary."
+
+
+@pytest.mark.parametrize(
+    "filename, content_type, expected",
+    [
+        ("scan.png", "image/png", "image"),
+        ("letter.jpg", "image/jpeg", "image"),
+        ("letter.pdf", "application/pdf", "pdf"),
+        ("LETTER.PDF", "application/octet-stream", "pdf"),
+    ],
+)
+def test_detect_document_type_handles_supported_attachments(filename, content_type, expected):
+    assert detect_document_type(filename, content_type) == expected
+
+
+def test_extract_text_from_document_handles_pdf_bytes(monkeypatch):
+    class FakePage:
+        def extract_text(self):
+            return "This is a PDF letter."
+
+    class FakeReader:
+        def __init__(self, stream):
+            self.stream = stream
+
+        @property
+        def pages(self):
+            return [FakePage()]
+
+    class FakeUploadFile:
+        filename = "letter.pdf"
+
+        async def read(self):
+            return b"%PDF-1.4\n%fake"
+
+    monkeypatch.setattr("backend.main.PdfReader", FakeReader)
+
+    text = asyncio.run(extract_text_from_document(FakeUploadFile()))
+
+    assert text == "This is a PDF letter."

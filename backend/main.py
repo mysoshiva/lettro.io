@@ -19,6 +19,11 @@ from jsonschema import ValidationError, validate
 from PIL import Image
 from pydantic import BaseModel
 
+try:
+    from pypdf import PdfReader
+except ImportError:  # pragma: no cover - dependency is installed in app runtime
+    PdfReader = None
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = BASE_DIR / "schema" / "schema-v2.json"
 PROMPT_PATH = BASE_DIR / "prompts" / "prompt-v2.md"
@@ -176,6 +181,15 @@ def validate_analysis(payload: dict[str, Any]) -> bool:
         return False
 
 
+def detect_document_type(filename: str, content_type: Optional[str] = None) -> str:
+    lowered_name = (filename or "").lower()
+    mime_type = (content_type or "").lower()
+
+    if lowered_name.endswith(".pdf") or "pdf" in mime_type:
+        return "pdf"
+    return "image"
+
+
 async def extract_text_from_image(file: UploadFile) -> str:
     contents = await file.read()
     if not contents:
@@ -191,6 +205,32 @@ async def extract_text_from_image(file: UploadFile) -> str:
 
     text = pytesseract.image_to_string(image, lang="eng+deu")
     return text.strip()
+
+
+async def extract_text_from_document(file: UploadFile) -> str:
+    contents = await file.read()
+    if not contents:
+        raise ValueError("Uploaded file is empty.")
+
+    content_type = getattr(file, "content_type", None)
+    document_type = detect_document_type(file.filename or "", content_type)
+    if document_type == "pdf":
+        if PdfReader is None:
+            raise RuntimeError("PDF support requires the pypdf package to be installed.")
+
+        reader = PdfReader(io.BytesIO(contents))
+        pages = []
+        for page in reader.pages:
+            page_text = page.extract_text() or ""
+            if page_text.strip():
+                pages.append(page_text.strip())
+
+        text = "\n".join(pages).strip()
+        if not text:
+            raise ValueError("Could not extract any readable text from the uploaded PDF.")
+        return text
+
+    return await extract_text_from_image(file)
 
 
 def extract_json_from_llm_response(raw_response: str) -> dict[str, Any]:
@@ -302,10 +342,13 @@ def analyze_with_llm(prompt: str) -> dict[str, Any]:
 
 
 @app.post("/ocr")
-async def ocr(image: UploadFile = File(...)):
+async def ocr(file: UploadFile = File(...)):
     try:
-        extracted_text = await extract_text_from_image(image)
-        return {"text": extracted_text}
+        extracted_text = await extract_text_from_document(file)
+        return {
+            "text": extracted_text,
+            "document_type": detect_document_type(file.filename or "", getattr(file, "content_type", None)),
+        }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
