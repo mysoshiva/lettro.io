@@ -37,6 +37,87 @@ Early MVP, in progress. Currently on **Step 1 — defining the prompt and output
 /docs           — design decisions as they're made
 ```
 
+## Local setup and testing
+
+### 1) Configure environment variables
+
+Create a local `.env` file from the template:
+
+```bash
+cd /workspaces/lettro.io
+cp .env.example .env
+```
+
+Then add a real API key and model:
+
+```env
+OPENAI_API_KEY=your_api_key_here
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4o-mini
+```
+
+> The `.env` file is local-only and should never be committed.
+
+### 2) Install dependencies
+
+```bash
+cd /workspaces/lettro.io
+python -m pip install -r backend/requirements.txt
+```
+
+If you want OCR to work locally, Tesseract must also be installed on the machine:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y tesseract-ocr
+```
+
+### 3) Run the API
+
+```bash
+cd /workspaces/lettro.io
+python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+```
+
+### 4) Run the frontend
+
+```bash
+cd /workspaces/lettro.io/frontend
+python -m http.server 8080
+```
+
+Then open:
+
+```text
+http://localhost:8080
+```
+
+### 5) Test the app
+
+Use either of the following flows:
+
+- Select a sample letter from the dropdown and click “Run sample”
+- Upload a letter image and click “Scan Letter”
+- Use the camera button to capture a letter directly from the webcam
+
+The API endpoints available are:
+
+- `POST /ocr` — OCR from an uploaded image
+- `POST /analyze` — redact text and call the LLM
+- `POST /save_scan` — store a scan record
+- `GET /history` — retrieve previous scan records
+- `GET /sample_letters` — list local sample letters
+- `POST /run_sample` — run one local sample through the full flow
+
+### 6) Expected behavior
+
+The app should:
+
+- detect the letter language
+- redact PII before sending anything to the LLM
+- return a structured JSON analysis that matches the schema contract
+- show a plain-language summary, deadline, required action, and consequence if missed
+
 ## Disclaimer
 
 Lettro is not a substitute for legal or professional advice. Always verify deadlines and requirements against the original letter or with a qualified professional.
