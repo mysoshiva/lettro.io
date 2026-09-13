@@ -167,6 +167,32 @@ def test_normalize_analysis_payload_handles_real_local_model_output_shape():
     assert "sender_address" not in normalized
 
 
+def test_normalize_analysis_payload_rewrites_malformed_local_model_keys_and_null_strings():
+    payload = {
+        "sender": "Maria Rubio Quiralte",
+        "letter_type": "",
+        "detected_language": "en",
+        ".deadline": {
+            "date": "null",
+            "raw_text": "within 14 days of receipt",
+            "is_relative_to_receipt": "true",
+            "confidence": "low",
+        },
+        "required_actions": [{"action": "null", "confidence": "low"}],
+        "consequences_if_missed": "null",
+        "overall_confidence": "low",
+    }
+
+    normalized = normalize_analysis_payload(payload)
+
+    assert "deadline" in normalized
+    assert normalized["deadline"]["date"] is None
+    assert normalized["deadline"]["is_relative_to_receipt"] is True
+    assert normalized["required_actions"] == []
+    assert normalized["consequences_if_missed"] is None
+    assert normalized["sender"] == "Maria Rubio Quiralte"
+
+
 def test_extract_json_from_llm_response_recovers_plural_deadline_key_and_truncated_string():
     response = '{"sender":"Bürgeramt Stadt Heilbronn","letter_type":"Notice","deadlines":{"date":"2026-10-12","is_relative_to_receipt":false,"raw_text":"b'
     parsed = __import__("backend.main", fromlist=["extract_json_from_llm_response"]).extract_json_from_llm_response(response)

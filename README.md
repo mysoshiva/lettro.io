@@ -67,7 +67,7 @@ sudo apt-get install -y tesseract-ocr
 Install Ollama from the official package for your OS, then pull a small local model:
 
 ```bash
-ollama pull llama3.2:3b
+ollama pull qwen2.5:3b
 ```
 
 Verify the server is up:
@@ -76,7 +76,7 @@ Verify the server is up:
 curl http://localhost:11434/api/tags
 ```
 
-You should see `llama3.2:3b` listed.
+You should see `qwen2.5:3b` listed.
 
 ### 3) Configure environment variables
 
@@ -95,7 +95,7 @@ For local Ollama testing, use:
 LLM_PROVIDER=openai
 OPENAI_API_KEY=ollama
 OPENAI_BASE_URL=http://localhost:11434/v1
-OPENAI_MODEL=llama3.2:3b
+OPENAI_MODEL=qwen2.5:3b
 ```
 
 If you want to use cloud providers instead, set the appropriate Anthropic or OpenAI values in `.env`.
@@ -110,14 +110,14 @@ source .venv/bin/activate
 export LLM_PROVIDER=openai
 export OPENAI_API_KEY=ollama
 export OPENAI_BASE_URL=http://localhost:11434/v1
-export OPENAI_MODEL=llama3.2:3b
+export OPENAI_MODEL=qwen2.5:3b
 uvicorn backend.main:app --host 0.0.0.0 --port 8001
 ```
 
 You can also start it with inline environment variables in one command:
 
 ```bash
-cd ~/lettro.io && LLM_PROVIDER=openai OPENAI_API_KEY=ollama OPENAI_BASE_URL=http://localhost:11434/v1 OPENAI_MODEL=llama3.2:3b uvicorn backend.main:app --host 0.0.0.0 --port 8001
+cd ~/lettro.io && LLM_PROVIDER=openai OPENAI_API_KEY=ollama OPENAI_BASE_URL=http://localhost:11434/v1 OPENAI_MODEL=qwen2.5:3b uvicorn backend.main:app --host 0.0.0.0 --port 8001
 ```
 
 ### 5) Start the frontend
@@ -146,7 +146,7 @@ Use either of the following flows:
 The app calls `GET /llm_status`, which returns JSON like:
 
 ```json
-{"provider":"ollama","kind":"local","available":true,"model":"llama3.2:3b","message":"Local model ready"}
+{"provider":"ollama","kind":"local","available":true,"model":"qwen2.5:3b","message":"Local model ready"}
 ```
 
 If `available` is false, the most common reasons are:

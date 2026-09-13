@@ -156,25 +156,53 @@ def normalize_analysis_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     for key in ["target_language", "sender_address", "sender_email", "sender_phone"]:
         normalized.pop(key, None)
-
+    if "deadline" not in normalized and ".deadline" in normalized:
+        normalized["deadline"] = normalized.pop(".deadline")
     if "deadline" not in normalized and "deadlines" in normalized:
         normalized["deadline"] = normalized.pop("deadlines")
+
+    def clean_string_like(value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if cleaned.lower() in {"", "null", "none", "n/a", "na"}:
+                return None
+            return cleaned
+        return value
+
+    def clean_bool_like(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        if isinstance(value, (int, float)):
+            return bool(value)
+        text = str(value).strip().lower()
+        if text in {"", "null", "none", "na", "n/a"}:
+            return False
+        return text in {"true", "yes", "y", "1"}
 
     if "detected_language" not in normalized:
         detected = normalized.get("language") or normalized.get("target_language") or "und"
         normalized["detected_language"] = detected if isinstance(detected, str) else "und"
+    normalized["detected_language"] = clean_string_like(normalized.get("detected_language")) or "und"
 
     sender = normalized.get("sender")
     if isinstance(sender, dict):
         candidate = sender.get("name") or sender.get("organization") or sender.get("value")
-        normalized["sender"] = candidate
+        normalized["sender"] = clean_string_like(candidate)
     elif sender is None:
         normalized["sender"] = None
+    else:
+        normalized["sender"] = clean_string_like(sender)
 
     letter_type = normalized.get("letter_type")
     if isinstance(letter_type, dict):
         candidate = letter_type.get("name") or letter_type.get("category") or letter_type.get("value")
-        normalized["letter_type"] = candidate
+        normalized["letter_type"] = clean_string_like(candidate)
+    else:
+        normalized["letter_type"] = clean_string_like(letter_type)
 
     if "requires_action" not in normalized:
         required_actions = normalized.get("required_actions") or []
@@ -182,7 +210,7 @@ def normalize_analysis_payload(payload: dict[str, Any]) -> dict[str, Any]:
         normalized["requires_action"] = bool(required_actions) or bool(consequences)
     elif not isinstance(normalized["requires_action"], bool):
         value = normalized["requires_action"]
-        normalized["requires_action"] = str(value).strip().lower() in {"true", "yes", "y", "1"}
+        normalized["requires_action"] = clean_bool_like(value)
 
     deadline = normalized.get("deadline")
     if not isinstance(deadline, dict):
@@ -197,20 +225,20 @@ def normalize_analysis_payload(payload: dict[str, Any]) -> dict[str, Any]:
     deadline_value = deadline.get("is_relative_to_receipt")
     if deadline_value is None:
         deadline["is_relative_to_receipt"] = False
-    elif not isinstance(deadline_value, bool):
-        deadline["is_relative_to_receipt"] = str(deadline_value).strip().lower() in {"true", "yes", "y", "1"}
+    else:
+        deadline["is_relative_to_receipt"] = clean_bool_like(deadline_value)
 
-    if deadline.get("date") is not None and not isinstance(deadline.get("date"), str):
-        deadline["date"] = str(deadline["date"])
-    if deadline.get("raw_text") is not None and not isinstance(deadline.get("raw_text"), str):
-        deadline["raw_text"] = str(deadline["raw_text"])
+    deadline["date"] = clean_string_like(deadline.get("date"))
+    deadline["raw_text"] = clean_string_like(deadline.get("raw_text"))
     if deadline.get("confidence") not in {"high", "medium", "low"}:
         deadline["confidence"] = "low"
 
-    if "summary" not in normalized or not isinstance(normalized.get("summary"), str):
+    if "summary" not in normalized or not isinstance(normalized.get("summary"), str) or not normalized.get("summary").strip():
         sender_text = normalized.get("sender") or "the sender"
         letter_type_text = normalized.get("letter_type") or "letter"
         normalized["summary"] = f"This is a {letter_type_text.lower()} from {sender_text} in the reader's language."
+    else:
+        normalized["summary"] = clean_string_like(normalized.get("summary")) or "This is a letter from the sender in the reader's language."
 
     required_actions = normalized.get("required_actions")
     if isinstance(required_actions, list):
@@ -220,22 +248,27 @@ def normalize_analysis_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 continue
             action = item.get("action") or item.get("summary") or item.get("text")
             confidence = item.get("confidence") or item.get("priority") or "medium"
-            if not action:
+            action_text = clean_string_like(action)
+            if not action_text:
                 continue
             normalized["required_actions"].append({
-                "action": action,
+                "action": action_text,
                 "confidence": confidence if confidence in {"high", "medium", "low"} else "medium",
             })
     else:
         normalized["required_actions"] = []
 
-    if "consequences_if_missed" not in normalized or normalized.get("consequences_if_missed") is None:
-        normalized["consequences_if_missed"] = None
+    consequences_value = normalized.get("consequences_if_missed")
+    normalized["consequences_if_missed"] = clean_string_like(consequences_value)
 
     if "overall_confidence" not in normalized and "confidence" in normalized:
         normalized["overall_confidence"] = normalized["confidence"]
-    if normalized.get("overall_confidence") not in {"high", "medium", "low"}:
+    normalized["overall_confidence"] = clean_string_like(normalized.get("overall_confidence")) or "medium"
+    if normalized["overall_confidence"] not in {"high", "medium", "low"}:
         normalized["overall_confidence"] = "medium"
+
+    if not normalized["required_actions"] and "requires_action" in normalized and normalized["requires_action"]:
+        normalized["requires_action"] = bool(normalized.get("consequences_if_missed") or normalized.get("summary"))
 
     return normalized
 
@@ -536,7 +569,7 @@ def get_llm_config() -> dict[str, str]:
             "provider": "openai",
             "api_key": api_key,
             "api_base": os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1" if provider == "ollama" else "https://api.openai.com/v1"),
-            "model": os.getenv("OPENAI_MODEL", "llama3.2:3b" if provider == "ollama" else "gpt-4o-mini"),
+            "model": os.getenv("OPENAI_MODEL", "qwen2.5:3b" if provider == "ollama" else "gpt-4o-mini"),
         }
 
     raise RuntimeError(f"Unsupported LLM provider: {provider}. Use 'openai' or 'anthropic'.")
@@ -547,7 +580,7 @@ def get_llm_status() -> dict[str, Any]:
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     openai_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_BASE_URL", "")
-    model = os.getenv("OPENAI_MODEL", "llama3.2:3b")
+    model = os.getenv("OPENAI_MODEL", "qwen2.5:3b")
 
     if provider == "anthropic" or (not provider and anthropic_key):
         return {

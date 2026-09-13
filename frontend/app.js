@@ -172,13 +172,34 @@ async function loadSampleLetters() {
   }
 }
 
+function mergeFiles(existingFiles, incomingFiles) {
+  const merged = [...existingFiles, ...Array.from(incomingFiles || [])];
+  const deduped = [];
+  const seen = new Set();
+
+  for (const file of merged) {
+    const key = `${file.name}:${file.size}:${file.lastModified}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(file);
+    }
+  }
+
+  return deduped;
+}
+
 document.getElementById("letterUpload").addEventListener("change", (event) => {
   const files = event.target.files;
   if (!files || !files.length) {
     renderSelectedFile([]);
     return;
   }
-  renderSelectedFile(files);
+
+  const merged = mergeFiles(currentFiles, files);
+  renderSelectedFile(merged);
+  const dataTransfer = new DataTransfer();
+  merged.forEach((file) => dataTransfer.items.add(file));
+  event.target.files = dataTransfer.files;
 });
 
 document.getElementById("scanBtn").addEventListener("click", async () => {
@@ -348,8 +369,6 @@ async function updateModelStatus() {
     if (statusText) {
       statusText.textContent = text;
     } else {
-      // Fallback so status is still visible even if the expected
-      // child element is missing for some reason.
       badge.textContent = text;
     }
   };
@@ -370,3 +389,5 @@ async function updateModelStatus() {
 }
 
 loadSampleLetters();
+updateModelStatus();
+window.setInterval(updateModelStatus, 15000);
