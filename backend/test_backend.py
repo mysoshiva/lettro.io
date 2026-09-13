@@ -13,6 +13,7 @@ from backend.main import (
     normalize_analysis_payload,
     redact_text,
     validate_analysis,
+    validate_upload_batch,
 )
 
 
@@ -97,6 +98,21 @@ def test_get_llm_config_uses_anthropic_when_configured(monkeypatch):
     assert config["model"] == "claude-opus-5"
 
 
+def test_get_llm_config_uses_ollama_when_configured(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:11434/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "llama3.1")
+
+    config = get_llm_config()
+
+    assert config["provider"] == "openai"
+    assert config["api_key"] == "ollama"
+    assert config["api_base"] == "http://localhost:11434/v1"
+    assert config["model"] == "llama3.1"
+
+
 def test_normalize_analysis_payload_fixes_common_llm_mismatches():
     payload = {
         "detected_language": "de",
@@ -123,6 +139,32 @@ def test_normalize_analysis_payload_fixes_common_llm_mismatches():
     assert normalized["required_actions"][0]["confidence"] == "high"
     assert "priority" not in normalized["required_actions"][0]
     assert normalized["overall_confidence"] == "high"
+
+
+def test_normalize_analysis_payload_handles_real_local_model_output_shape():
+    payload = {
+        "sender": "[NAME]",
+        "letter_type": "notification",
+        "deadline": {
+            "date": "2027-10-12",
+            "is_relative_to_receipt": None,
+            "confidence": "medium",
+            "raw_text": "bis spätestens 12.10.2026",
+        },
+        "required_actions": [{"action": "update registration documents", "confidence": "high"}],
+        "consequences_if_missed": "If you do not update your address within the specified deadline, we will take disciplinary measures, including filing a fine notice with the relevant authorities.",
+        "confidence": "medium",
+        "sender_address": "[ADDRESS]",
+        "target_language": "en",
+    }
+
+    normalized = normalize_analysis_payload(payload)
+
+    assert normalized["detected_language"] == "und"
+    assert normalized["deadline"]["is_relative_to_receipt"] is False
+    assert normalized["overall_confidence"] == "medium"
+    assert "target_language" not in normalized
+    assert "sender_address" not in normalized
 
 
 def test_analyze_with_llm_handles_anthropic_thinking_block(monkeypatch):
@@ -206,3 +248,73 @@ def test_extract_text_from_document_handles_pdf_bytes(monkeypatch):
     text = asyncio.run(extract_text_from_document(FakeUploadFile()))
 
     assert text == "This is a PDF letter."
+
+
+def test_validate_upload_batch_enforces_file_count_and_size_limits():
+    files = [SimpleNamespace(filename=f"doc-{i}.pdf", content_type="application/pdf", size=2 * 1024 * 1024) for i in range(31)]
+
+    with pytest.raises(ValueError, match="30"):
+        validate_upload_batch(files)
+
+    files = [SimpleNamespace(filename="letter.pdf", content_type="application/pdf", size=20 * 1024 * 1024)]
+    with pytest.raises(ValueError, match="20 MB"):
+        validate_upload_batch(files)
+
+
+def test_validate_upload_batch_rejects_unsupported_mime_types():
+    files = [SimpleNamespace(filename="notes.exe", content_type="application/x-msdownload", size=1024)]
+
+    with pytest.raises(ValueError, match="supported"):
+        validate_upload_batch(files)
+
+
+def test_extract_text_from_document_falls_back_to_ocr_for_rasterized_pdf(monkeypatch):
+    class EmptyPage:
+        def extract_text(self):
+            return ""
+
+    class FakeReader:
+        def __init__(self, stream):
+            self.stream = stream
+
+        @property
+        def pages(self):
+            return [EmptyPage()]
+
+    class FakePixmap:
+        def tobytes(self, format):
+            return b"png-bytes"
+
+    class FakePageWithPixmap:
+        def get_pixmap(self, dpi):
+            assert dpi == 300
+            return FakePixmap()
+
+    class FakePdfDoc:
+        def __init__(self, stream, filetype):
+            self.stream = stream
+            self.filetype = filetype
+
+        def __iter__(self):
+            return iter([FakePageWithPixmap()])
+
+        def close(self):
+            pass
+
+    class FakeUploadFile:
+        filename = "scanned.pdf"
+        content_type = "application/pdf"
+
+        async def read(self):
+            return b"%PDF-1.4\n%fake"
+
+    async def fake_ocr(contents):
+        return "OCR text from rasterized PDF"
+
+    monkeypatch.setattr("backend.main.PdfReader", FakeReader)
+    monkeypatch.setattr("backend.main.fitz", SimpleNamespace(open=lambda stream, filetype: FakePdfDoc(stream, filetype)))
+    monkeypatch.setattr("backend.main.extract_text_from_image", fake_ocr)
+
+    text = asyncio.run(extract_text_from_document(FakeUploadFile()))
+
+    assert text == "OCR text from rasterized PDF"

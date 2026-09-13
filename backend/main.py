@@ -24,10 +24,34 @@ try:
 except ImportError:  # pragma: no cover - dependency is installed in app runtime
     PdfReader = None
 
+try:
+    import fitz  # PyMuPDF, used to rasterize scanned/image-only PDF pages for OCR
+except ImportError:  # pragma: no cover - dependency is installed in app runtime
+    fitz = None
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = BASE_DIR / "schema" / "schema-v2.json"
 PROMPT_PATH = BASE_DIR / "prompts" / "prompt-v2.md"
 TEST_LETTERS_DIR = BASE_DIR / "test-letters"
+
+MAX_FILES_PER_BATCH = 30
+MAX_TOTAL_UPLOAD_BYTES = 20 * 1024 * 1024
+SUPPORTED_UPLOAD_TYPES = {
+    "pdf",
+    "png",
+    "jpg",
+    "jpeg",
+    "webp",
+    "tif",
+    "tiff",
+}
+SUPPORTED_MIME_TYPES = {
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/tiff",
+}
 
 app = FastAPI()
 
@@ -130,26 +154,60 @@ def list_sample_letters() -> list[str]:
 def normalize_analysis_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(payload)
 
+    for key in ["target_language", "sender_address", "sender_email", "sender_phone"]:
+        normalized.pop(key, None)
+
+    if "detected_language" not in normalized:
+        detected = normalized.get("language") or normalized.get("target_language") or "und"
+        normalized["detected_language"] = detected if isinstance(detected, str) else "und"
+
     sender = normalized.get("sender")
     if isinstance(sender, dict):
         candidate = sender.get("name") or sender.get("organization") or sender.get("value")
         normalized["sender"] = candidate
+    elif sender is None:
+        normalized["sender"] = None
 
     letter_type = normalized.get("letter_type")
     if isinstance(letter_type, dict):
         candidate = letter_type.get("name") or letter_type.get("category") or letter_type.get("value")
         normalized["letter_type"] = candidate
 
-    if "requires_action" in normalized and not isinstance(normalized["requires_action"], bool):
+    if "requires_action" not in normalized:
+        required_actions = normalized.get("required_actions") or []
+        consequences = normalized.get("consequences_if_missed")
+        normalized["requires_action"] = bool(required_actions) or bool(consequences)
+    elif not isinstance(normalized["requires_action"], bool):
         value = normalized["requires_action"]
         normalized["requires_action"] = str(value).strip().lower() in {"true", "yes", "y", "1"}
 
     deadline = normalized.get("deadline")
-    if isinstance(deadline, dict):
-        deadline_value = deadline.get("is_relative_to_receipt")
-        if not isinstance(deadline_value, bool):
-            deadline["is_relative_to_receipt"] = str(deadline_value).strip().lower() in {"true", "yes", "y", "1"}
+    if not isinstance(deadline, dict):
+        deadline = {
+            "date": None,
+            "raw_text": None,
+            "is_relative_to_receipt": False,
+            "confidence": "low",
+        }
         normalized["deadline"] = deadline
+
+    deadline_value = deadline.get("is_relative_to_receipt")
+    if deadline_value is None:
+        deadline["is_relative_to_receipt"] = False
+    elif not isinstance(deadline_value, bool):
+        deadline["is_relative_to_receipt"] = str(deadline_value).strip().lower() in {"true", "yes", "y", "1"}
+
+    if deadline.get("date") is not None and not isinstance(deadline.get("date"), str):
+        deadline["date"] = str(deadline["date"])
+    if deadline.get("raw_text") is not None and not isinstance(deadline.get("raw_text"), str):
+        deadline["raw_text"] = str(deadline["raw_text"])
+    if deadline.get("confidence") not in {"high", "medium", "low"}:
+        deadline["confidence"] = "low"
+
+    if "summary" not in normalized or not isinstance(normalized.get("summary"), str):
+        sender_text = normalized.get("sender") or "the sender"
+        letter_type_text = normalized.get("letter_type") or "letter"
+        normalized["summary"] = f"This is a {letter_type_text.lower()} from {sender_text} in the reader's language."
 
     required_actions = normalized.get("required_actions")
     if isinstance(required_actions, list):
@@ -165,9 +223,16 @@ def normalize_analysis_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 "action": action,
                 "confidence": confidence if confidence in {"high", "medium", "low"} else "medium",
             })
+    else:
+        normalized["required_actions"] = []
+
+    if "consequences_if_missed" not in normalized or normalized.get("consequences_if_missed") is None:
+        normalized["consequences_if_missed"] = None
 
     if "overall_confidence" not in normalized and "confidence" in normalized:
         normalized["overall_confidence"] = normalized["confidence"]
+    if normalized.get("overall_confidence") not in {"high", "medium", "low"}:
+        normalized["overall_confidence"] = "medium"
 
     return normalized
 
@@ -188,6 +253,51 @@ def detect_document_type(filename: str, content_type: Optional[str] = None) -> s
     if lowered_name.endswith(".pdf") or "pdf" in mime_type:
         return "pdf"
     return "image"
+
+
+def get_supported_upload_summary() -> str:
+    return ".pdf, .png, .jpg, .jpeg, .webp, .tif, .tiff"
+
+
+def is_supported_upload(filename: str, content_type: Optional[str] = None) -> bool:
+    lowered_name = (filename or "").lower()
+    mime_type = (content_type or "").lower()
+    extension = lowered_name.rsplit(".", 1)[-1] if "." in lowered_name else ""
+    is_supported_ext = extension in SUPPORTED_UPLOAD_TYPES
+    is_supported_mime = mime_type in SUPPORTED_MIME_TYPES or mime_type.startswith("image/") and mime_type.split("/")[-1] in {"png", "jpeg", "jpg", "webp", "tiff", "tif"}
+    return is_supported_ext or is_supported_mime
+
+
+def validate_upload_batch(files: list[Any]) -> list[Any]:
+    if files is None:
+        raise ValueError("No files selected.")
+
+    if len(files) > MAX_FILES_PER_BATCH:
+        raise ValueError(f"You can upload up to {MAX_FILES_PER_BATCH} files at once.")
+
+    total_size = 0
+    for file in files:
+        size = getattr(file, "size", None)
+        if size is None:
+            size = len(getattr(file, "read", lambda: b"")()) if hasattr(file, "read") else 0
+        total_size += int(size or 0)
+
+    if total_size >= MAX_TOTAL_UPLOAD_BYTES:
+        raise ValueError(f"Total upload size exceeds {MAX_TOTAL_UPLOAD_BYTES / (1024 * 1024):.0f} MB limit.")
+
+    unsupported = []
+    for file in files:
+        filename = getattr(file, "filename", "") or ""
+        mime_type = getattr(file, "content_type", "") or ""
+        if not is_supported_upload(filename, mime_type):
+            unsupported.append(filename or "unknown file")
+
+    if unsupported:
+        raise ValueError(
+            "Unsupported file format(s): " + ", ".join(sorted(set(unsupported))) + ". Supported types: " + get_supported_upload_summary() + "."
+        )
+
+    return files
 
 
 async def extract_text_from_image(contents: bytes) -> str:
@@ -225,9 +335,30 @@ async def extract_text_from_document(file: UploadFile) -> str:
                 pages.append(page_text.strip())
 
         text = "\n".join(pages).strip()
-        if not text:
+        if text:
+            return text
+
+        # No embedded text layer — this is very common with phone-scanned PDFs.
+        # Rasterize each page and OCR it using the same path as images.
+        if fitz is None:
+            raise RuntimeError("Scanned-PDF support requires the pymupdf package to be installed.")
+
+        ocr_pages = []
+        pdf_doc = fitz.open(stream=contents, filetype="pdf")
+        try:
+            for page in pdf_doc:
+                pixmap = page.get_pixmap(dpi=300)
+                page_image_bytes = pixmap.tobytes("png")
+                page_text = await extract_text_from_image(page_image_bytes)
+                if page_text.strip():
+                    ocr_pages.append(page_text.strip())
+        finally:
+            pdf_doc.close()
+
+        ocr_text = "\n".join(ocr_pages).strip()
+        if not ocr_text:
             raise ValueError("Could not extract any readable text from the uploaded PDF.")
-        return text
+        return ocr_text
 
     return await extract_text_from_image(contents)
 
@@ -237,7 +368,27 @@ def extract_json_from_llm_response(raw_response: str) -> dict[str, Any]:
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*```$", "", cleaned, flags=re.IGNORECASE)
     cleaned = cleaned.strip()
-    return json.loads(cleaned)
+
+    if not cleaned:
+        raise ValueError("LLM returned an empty response.")
+
+    candidates = [cleaned]
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if 0 <= start < end:
+        candidates.append(cleaned[start : end + 1])
+
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            normalized = re.sub(r",\s*([}\]])", r"\1", candidate)
+            try:
+                return json.loads(normalized)
+            except json.JSONDecodeError:
+                continue
+
+    raise ValueError(f"LLM response was not valid JSON: {cleaned[:200]}")
 
 
 def extract_text_from_anthropic_response(body: dict[str, Any]) -> str:
@@ -274,20 +425,88 @@ def get_llm_config() -> dict[str, str]:
             "model": os.getenv("ANTHROPIC_MODEL", "claude-opus-5"),
         }
 
-    if provider in {"", "openai"}:
-        api_key = openai_key
-        if not api_key:
-            raise RuntimeError(
-                "OPENAI_API_KEY is not set. Configure an OpenAI-compatible API key to enable LLM analysis."
-            )
+    if provider in {"", "openai", "ollama"}:
+        if provider == "ollama":
+            api_key = openai_key or "ollama"
+        else:
+            api_key = openai_key
+            if not api_key:
+                raise RuntimeError(
+                    "OPENAI_API_KEY is not set. Configure an OpenAI-compatible API key to enable LLM analysis."
+                )
         return {
             "provider": "openai",
             "api_key": api_key,
-            "api_base": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            "api_base": os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1" if provider == "ollama" else "https://api.openai.com/v1"),
+            "model": os.getenv("OPENAI_MODEL", "llama3.1" if provider == "ollama" else "gpt-4o-mini"),
         }
 
     raise RuntimeError(f"Unsupported LLM provider: {provider}. Use 'openai' or 'anthropic'.")
+
+
+def get_llm_status() -> dict[str, Any]:
+    provider = (os.getenv("LLM_PROVIDER") or "").strip().lower()
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    openai_key = os.getenv("OPENAI_API_KEY")
+    base_url = os.getenv("OPENAI_BASE_URL", "")
+    model = os.getenv("OPENAI_MODEL", "llama3.1")
+
+    if provider == "anthropic" or (not provider and anthropic_key):
+        return {
+            "provider": "anthropic",
+            "kind": "cloud",
+            "available": True,
+            "model": os.getenv("ANTHROPIC_MODEL", "claude-opus-5"),
+            "message": "Anthropic configured",
+        }
+
+    if provider == "ollama" or (base_url and "localhost:11434" in base_url):
+        ollama_base = base_url.rsplit("/v1", 1)[0] if base_url else "http://localhost:11434"
+        try:
+            response = requests.get(f"{ollama_base}/api/tags", timeout=5)
+            if response.status_code == 200:
+                body = response.json()
+                models = [item.get("name") for item in body.get("models", []) if isinstance(item, dict)]
+                return {
+                    "provider": "ollama",
+                    "kind": "local",
+                    "available": True,
+                    "model": model,
+                    "models": models,
+                    "message": "Local model ready",
+                }
+            return {
+                "provider": "ollama",
+                "kind": "local",
+                "available": False,
+                "model": model,
+                "message": "Ollama is reachable but no model is available yet",
+            }
+        except Exception as exc:
+            return {
+                "provider": "ollama",
+                "kind": "local",
+                "available": False,
+                "model": model,
+                "message": f"Ollama not reachable: {exc}",
+            }
+
+    if provider in {"", "openai"} and not openai_key and not base_url:
+        return {
+            "provider": "openai",
+            "kind": "cloud",
+            "available": False,
+            "model": "not configured",
+            "message": "No model configured",
+        }
+
+    return {
+        "provider": "openai",
+        "kind": "cloud",
+        "available": True,
+        "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        "message": "Cloud model configured",
+    }
 
 
 def analyze_with_llm(prompt: str) -> dict[str, Any]:
@@ -310,7 +529,7 @@ def analyze_with_llm(prompt: str) -> dict[str, Any]:
                 "max_tokens": 4096,
                 "messages": [{"role": "user", "content": prompt}],
             },
-            timeout=60,
+            timeout=180,
         )
         if response.status_code >= 400:
             raise RuntimeError(f"LLM request failed: {response.status_code} {response.text}")
@@ -330,7 +549,7 @@ def analyze_with_llm(prompt: str) -> dict[str, Any]:
                 {"role": "user", "content": prompt},
             ],
         },
-        timeout=60,
+        timeout=180,
     )
     if response.status_code >= 400:
         raise RuntimeError(f"LLM request failed: {response.status_code} {response.text}")
@@ -341,13 +560,31 @@ def analyze_with_llm(prompt: str) -> dict[str, Any]:
 
 
 @app.post("/ocr")
-async def ocr(file: UploadFile = File(...)):
+async def ocr(files: list[UploadFile] = File(...)):
     try:
-        extracted_text = await extract_text_from_document(file)
+        validated = validate_upload_batch(files)
+        documents = []
+        combined_text = []
+
+        for file in validated:
+            extracted_text = await extract_text_from_document(file)
+            file_type = detect_document_type(file.filename or "", getattr(file, "content_type", None))
+            documents.append(
+                {
+                    "filename": file.filename,
+                    "text": extracted_text,
+                    "document_type": file_type,
+                }
+            )
+            combined_text.append(f"--- {file.filename or 'attachment'} ---\n{extracted_text}")
+
         return {
-            "text": extracted_text,
-            "document_type": detect_document_type(file.filename or "", getattr(file, "content_type", None)),
+            "documents": documents,
+            "text": "\n\n".join(combined_text),
+            "total_files": len(documents),
         }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -355,6 +592,11 @@ async def ocr(file: UploadFile = File(...)):
 @app.get("/sample_letters")
 async def sample_letters():
     return {"letters": list_sample_letters()}
+
+
+@app.get("/llm_status")
+async def llm_status():
+    return get_llm_status()
 
 
 @app.post("/run_sample")

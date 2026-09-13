@@ -30,9 +30,9 @@
         </div>
 
         <label class="upload-area" for="letterUpload">
-          <input type="file" id="letterUpload" accept="image/*,.pdf">
-          <span class="upload-title">Choose a file</span>
-          <small>Images or PDFs supported</small>
+          <input type="file" id="letterUpload" accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff" multiple>
+          <span class="upload-title">Upload letters</span>
+          <small>PDF, image, or scanned document</small>
         </label>
 
         <div class="button-row">
@@ -50,12 +50,29 @@
         <div class="panel-header mt-4">
           <h2>2. Choose language</h2>
         </div>
-        <select id="targetLanguage" class="form-select">
-          <option value="en">English</option>
-          <option value="de">German</option>
-          <option value="fr">French</option>
-          <option value="es">Spanish</option>
-        </select>
+        <div class="language-stack">
+          <select id="targetLanguage" class="form-select">
+            <option value="en">English</option>
+            <option value="de">German</option>
+            <option value="fr">French</option>
+            <option value="es">Spanish</option>
+            <option value="ar">Arabic</option>
+            <option value="tr">Turkish</option>
+            <option value="uk">Ukrainian</option>
+            <option value="ro">Romanian</option>
+            <option value="pl">Polish</option>
+            <option value="pt">Portuguese</option>
+            <option value="ru">Russian</option>
+            <option value="sq">Albanian</option>
+            <option value="fa">Persian (Farsi)</option>
+            <option value="it">Italian</option>
+            <option value="nl">Dutch</option>
+          </select>
+          <div id="modelStatus" class="model-status neutral">
+            <span class="status-dot"></span>
+            <span class="status-text">Checking model…</span>
+          </div>
+        </div>
 
         <div class="panel-header mt-4">
           <h2>3. Try local sample letters</h2>
