@@ -1,14 +1,19 @@
 const API_BASE = (() => {
+  const explicitBase = window.LT_BACKEND_URL || window.__APP_CONFIG__?.API_BASE;
+  if (explicitBase) {
+    return explicitBase.replace(/\/$/, '');
+  }
+
   const host = window.location.hostname;
   if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') {
-    return 'http://localhost:8000';
+    return 'http://localhost:8001';
   }
 
   if (window.location.origin.includes(':8080')) {
-    return window.location.origin.replace(/:8080$/, ':8000');
+    return window.location.origin.replace(/:8080$/, ':8001');
   }
 
-  return 'http://localhost:8000';
+  return 'http://localhost:8001';
 })();
 
 function renderAnalysis(analysis) {
