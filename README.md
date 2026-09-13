@@ -6,107 +6,124 @@ Lettro explains confusing official letters — from government agencies, insurer
 
 ## The problem
 
-People who don't fluently read the language a letter arrives in often can't tell what it's asking of them, what the deadline is, or what happens if they miss it. Many turn to online translation tools, which means handing documents with personal information — case numbers, addresses, financial details — to a third party.
+People who do not fluently read the language a letter arrives in often cannot tell what it is asking of them, what the deadline is, or what happens if they miss it. Many turn to online translation tools, which means handing documents with personal information — case numbers, addresses, financial details — to a third party.
 
 ## What Lettro does
 
-- Reads a photo of a letter, in any source language
+- Reads a photo or PDF of a letter, in any source language
 - Extracts the sender, letter type, a plain-language summary, the deadline, and the required next steps
 - Returns the explanation in the reader's preferred language
-- Aims to keep sensitive personal details from ever leaving the device unnecessarily
+- Tries to keep sensitive personal details from leaving the device unnecessarily
+- Supports a local Ollama model path for privacy-first testing and development
+
+## Current features
+
+- Local Ollama/OpenAI-compatible model support
+- Local model status indicator in the frontend
+- Multiple-file upload support (up to 30 files)
+- Total upload limit of 20 MB per batch
+- Strict supported-format enforcement for PDF, PNG, JPG, JPEG, WebP, TIFF
+- PDF extraction with OCR fallback for scanned documents
+- Language selection for multiple European and international language targets
+- Sample-letter runner and history drawer
+- Backend schema validation to keep LLM output aligned with the required JSON contract
 
 ## Status
 
-Early MVP, in progress. Currently on **Step 1 — defining the prompt and output schema** against a small set of real letter types.
-
-## Planned architecture (v1)
-
-- Mobile-friendly web app (PWA) — camera capture, no app-store dependency to start
-- Client-side OCR — image to text, on-device
-- Local redaction pass — strip identifying details before anything reaches the cloud
-- Small backend API wrapping an LLM call for translation and explanation
-- Structured JSON output with a confidence score per field (deadline, required actions, etc.)
-- Future: a fully on-device model path for users who want zero network calls
+The project is now running in a local privacy-first mode and is suitable for local testing with Ollama. The backend validation and local-model flow have been verified with automated tests.
 
 ## Repo structure
 
 ```
-/prompts        — versioned prompt text, one file per iteration
-/test-letters   — anonymized or synthetic sample letters only (never real originals)
-/schema         — the JSON output schema
-/docs           — design decisions as they're made
+/backend       — FastAPI API, OCR, validation, LLM integration
+/frontend      — static HTML/CSS/JS app
+/prompts       — prompt versions
+/schema        — JSON schema files
+/test-letters  — anonymized sample letters for local testing
 ```
 
 ## Local setup and testing
 
-### 1) Configure environment variables
-
-Create a local `.env` file from the template:
+### 1) Install dependencies
 
 ```bash
-cd /workspaces/lettro.io
-cp .env.example .env
-```
-
-Then choose your provider and set the matching API key:
-
-```env
-LLM_PROVIDER=anthropic
-
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o-mini
-
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-ANTHROPIC_BASE_URL=https://api.anthropic.com
-ANTHROPIC_MODEL=claude-opus-5
-```
-
-If you already have an Anthropic key, set `LLM_PROVIDER=anthropic` and use your Anthropic key. If you prefer OpenAI-compatible providers, keep `LLM_PROVIDER=openai` and populate `OPENAI_API_KEY` instead.
-
-#### How to test with Anthropic
-
-1. Set `LLM_PROVIDER=anthropic` in [.env](.env)
-2. Put your Anthropic key in `ANTHROPIC_API_KEY`
-3. Keep `ANTHROPIC_BASE_URL=https://api.anthropic.com`
-4. Use a valid model ID such as `claude-opus-5`
-5. Start the backend and call the sample endpoint:
-
-```bash
-cd /workspaces/lettro.io
-python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
-curl -X POST http://localhost:8000/run_sample \
-  -H 'Content-Type: application/json' \
-  -d '{"filename":"01-stadt-heilbronn-kfz-adresse.md","target_language":"en"}'
-```
-
-> The `.env` file is local-only and should never be committed.
-
-### 2) Install dependencies
-
-```bash
-cd /workspaces/lettro.io
+cd ~/lettro.io
+python -m venv .venv
+source .venv/bin/activate
 python -m pip install -r backend/requirements.txt
 ```
 
-If you want OCR to work locally, Tesseract must also be installed on the machine:
+If OCR is required for scans or PDFs, install Tesseract.
+
+On Ubuntu/Debian:
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y tesseract-ocr
 ```
 
-### 3) Run the API
+### 2) Install and run Ollama locally
+
+Install Ollama from the official package for your OS, then pull a small local model:
 
 ```bash
-cd /workspaces/lettro.io
-python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+ollama pull llama3.2:3b
 ```
 
-### 4) Run the frontend
+Verify the server is up:
 
 ```bash
-cd /workspaces/lettro.io/frontend
+curl http://localhost:11434/api/tags
+```
+
+You should see `llama3.2:3b` listed.
+
+### 3) Configure environment variables
+
+The backend automatically loads `.env` at startup through `python-dotenv`.
+
+Create a local `.env` file from the template:
+
+```bash
+cd ~/lettro.io
+cp .env.example .env
+```
+
+For local Ollama testing, use:
+
+```env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=ollama
+OPENAI_BASE_URL=http://localhost:11434/v1
+OPENAI_MODEL=llama3.2:3b
+```
+
+If you want to use cloud providers instead, set the appropriate Anthropic or OpenAI values in `.env`.
+
+> The `.env` file is local-only and should not be committed.
+
+### 4) Start the backend
+
+```bash
+cd ~/lettro.io
+source .venv/bin/activate
+export LLM_PROVIDER=openai
+export OPENAI_API_KEY=ollama
+export OPENAI_BASE_URL=http://localhost:11434/v1
+export OPENAI_MODEL=llama3.2:3b
+uvicorn backend.main:app --host 0.0.0.0 --port 8001
+```
+
+You can also start it with inline environment variables in one command:
+
+```bash
+cd ~/lettro.io && LLM_PROVIDER=openai OPENAI_API_KEY=ollama OPENAI_BASE_URL=http://localhost:11434/v1 OPENAI_MODEL=llama3.2:3b uvicorn backend.main:app --host 0.0.0.0 --port 8001
+```
+
+### 5) Start the frontend
+
+```bash
+cd ~/lettro.io/frontend
 python -m http.server 8080
 ```
 
@@ -116,24 +133,50 @@ Then open:
 http://localhost:8080
 ```
 
-### 5) Test the app
+### 6) Test the app
 
 Use either of the following flows:
 
-- Select a sample letter from the dropdown and click “Run sample”
-- Upload a letter image and click “Scan Letter”
-- Use the camera button to capture a letter directly from the webcam
+- Select a sample letter and click “Run sample”
+- Upload PDF/image files and click “Scan Letter”
+- Use the camera button to capture a letter from the webcam
 
-The API endpoints available are:
+### 7) Check the local model status
 
-- `POST /ocr` — OCR from an uploaded image
-- `POST /analyze` — redact text and call the LLM
-- `POST /save_scan` — store a scan record
-- `GET /history` — retrieve previous scan records
-- `GET /sample_letters` — list local sample letters
-- `POST /run_sample` — run one local sample through the full flow
+The app calls `GET /llm_status`, which returns JSON like:
 
-### 6) Expected behavior
+```json
+{"provider":"ollama","kind":"local","available":true,"model":"llama3.2:3b","message":"Local model ready"}
+```
+
+If `available` is false, the most common reasons are:
+
+- Ollama is not installed or not running
+- the model is not pulled
+- the backend was started without the env variables
+- the backend is pointing at the wrong port or base URL
+
+## API endpoints
+
+- `GET /llm_status` — local/cloud model state
+- `GET /sample_letters` — list sample letters
+- `POST /ocr` — OCR one or more uploaded files
+- `POST /analyze` — analyze OCR text with the configured LLM
+- `POST /run_sample` — run one included test letter through the full flow
+- `POST /save_scan` — save a scan result to SQLite
+- `GET /history` — load saved scans
+
+## Environment variable behavior
+
+The app does not automatically keep reading new shell variables after startup. The backend loads environment values when the Python process starts, using `load_dotenv()` from `.env` and the current process environment.
+
+That means:
+
+- if you launch `uvicorn` in a shell where the variables are exported, they are available immediately
+- if you place them in `.env`, they are read on each backend start
+- if you change `.env` while the server is running, you must restart the backend to reload them
+
+## Expected behavior
 
 The app should:
 
@@ -141,6 +184,7 @@ The app should:
 - redact PII before sending anything to the LLM
 - return a structured JSON analysis that matches the schema contract
 - show a plain-language summary, deadline, required action, and consequence if missed
+- keep model access local when using Ollama
 
 ## Disclaimer
 
