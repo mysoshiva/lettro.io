@@ -340,28 +340,32 @@ document.getElementById("historyBtn").addEventListener("click", async () => {
 async function updateModelStatus() {
   const badge = document.getElementById('modelStatus');
   if (!badge) return;
+  const statusText = badge.querySelector('.status-text');
+
+  const applyStatus = (cls, text) => {
+    badge.classList.remove('neutral', 'ready', 'offline');
+    badge.classList.add(cls);
+    if (statusText) {
+      statusText.textContent = text;
+    } else {
+      // Fallback so status is still visible even if the expected
+      // child element is missing for some reason.
+      badge.textContent = text;
+    }
+  };
 
   try {
     const response = await fetch(`${API_BASE}/llm_status`);
     if (!response.ok) {
       throw new Error('Unable to check model status');
     }
-
     const status = await response.json();
-    badge.classList.remove('neutral', 'ready', 'offline');
-
-    const text = status.available ? (status.message || 'Local model ready') : (status.message || 'Local model unavailable');
-    badge.querySelector('.status-text').textContent = text;
-
-    if (status.available) {
-      badge.classList.add('ready');
-    } else {
-      badge.classList.add('offline');
-    }
+    const text = status.available
+      ? (status.message || 'Local model ready')
+      : (status.message || 'Local model unavailable');
+    applyStatus(status.available ? 'ready' : 'offline', text);
   } catch (error) {
-    badge.classList.remove('neutral', 'ready', 'offline');
-    badge.classList.add('offline');
-    badge.querySelector('.status-text').textContent = 'Local model unavailable';
+    applyStatus('offline', 'Local model unavailable');
   }
 }
 
