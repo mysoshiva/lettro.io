@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover - dependency is installed in app runtime
     PdfReader = None
 
 try:
-    import fitz  # PyMuPDF, used to rasterize scanned/image-only PDF pages for OCR
+    import pymupdf as fitz  # rasterizes scanned/image-only PDF pages for OCR
 except ImportError:  # pragma: no cover - dependency is installed in app runtime
     fitz = None
 
@@ -156,6 +156,9 @@ def normalize_analysis_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     for key in ["target_language", "sender_address", "sender_email", "sender_phone"]:
         normalized.pop(key, None)
+
+    if "deadline" not in normalized and "deadlines" in normalized:
+        normalized["deadline"] = normalized.pop("deadlines")
 
     if "detected_language" not in normalized:
         detected = normalized.get("language") or normalized.get("target_language") or "und"
@@ -372,21 +375,110 @@ def extract_json_from_llm_response(raw_response: str) -> dict[str, Any]:
     if not cleaned:
         raise ValueError("LLM returned an empty response.")
 
-    candidates = [cleaned]
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if 0 <= start < end:
-        candidates.append(cleaned[start : end + 1])
+    def repair_incomplete_json(text: str) -> str:
+        repaired = text.strip()
+        repaired = repaired.replace('"deadlines"', '"deadline"')
+        if not repaired.startswith("{"):
+            start = repaired.find("{")
+            if start >= 0:
+                repaired = repaired[start:]
+            else:
+                return repaired
 
-    for candidate in candidates:
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            normalized = re.sub(r",\s*([}\]])", r"\1", candidate)
-            try:
-                return json.loads(normalized)
-            except json.JSONDecodeError:
+        in_string = False
+        escaped = False
+        stack: list[str] = []  # tracks open braces/brackets in actual nesting order
+
+        for ch in repaired:
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
                 continue
+
+            if ch == '"':
+                in_string = True
+            elif ch == '{':
+                stack.append('}')
+            elif ch == '[':
+                stack.append(']')
+            elif ch in '}]' and stack:
+                stack.pop()
+
+        if in_string:
+            repaired += '"'
+        # Close in reverse (LIFO) order — the innermost open structure
+        # must be closed first, which a pair of independent brace/bracket
+        # counters can't guarantee once an object is truncated inside an
+        # array (e.g. inside `required_actions: [{...`).
+        while stack:
+            repaired += stack.pop()
+
+        repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
+        return repaired
+
+    def find_first_balanced_object(text: str) -> Optional[str]:
+        """Return the exact substring of the first complete top-level
+        {...} object, discarding anything before or after it. This is
+        what handles small local models that append trailing chatter
+        after an otherwise perfectly valid JSON object — something the
+        brace-padding repair below can't fix, since there's nothing
+        missing to pad, there's extra content to discard instead."""
+        start = text.find("{")
+        if start < 0:
+            return None
+
+        in_string = False
+        escaped = False
+        depth = 0
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+        return None  # never closed — genuinely truncated, not just trailing garbage
+
+    candidates = [cleaned]
+    exact_object = find_first_balanced_object(cleaned)
+    if exact_object:
+        candidates.insert(0, exact_object)
+    if "{" in cleaned:
+        start = cleaned.find("{")
+        payload = cleaned[start:]
+        candidates.append(payload)
+        candidates.append(repair_incomplete_json(payload))
+
+    for candidate in list(dict.fromkeys(candidates)):
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            continue
+
+        repaired = repair_incomplete_json(candidate)
+        try:
+            parsed = json.loads(repaired)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            continue
 
     raise ValueError(f"LLM response was not valid JSON: {cleaned[:200]}")
 
@@ -428,6 +520,12 @@ def get_llm_config() -> dict[str, str]:
     if provider in {"", "openai", "ollama"}:
         if provider == "ollama":
             api_key = openai_key or "ollama"
+        elif provider == "" and not openai_key:
+            # Nothing explicitly configured — default to a local Ollama
+            # instance rather than failing outright. This makes "just
+            # install Ollama and pull a model" work with zero .env setup.
+            provider = "ollama"
+            api_key = "ollama"
         else:
             api_key = openai_key
             if not api_key:
@@ -438,7 +536,7 @@ def get_llm_config() -> dict[str, str]:
             "provider": "openai",
             "api_key": api_key,
             "api_base": os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1" if provider == "ollama" else "https://api.openai.com/v1"),
-            "model": os.getenv("OPENAI_MODEL", "llama3.1" if provider == "ollama" else "gpt-4o-mini"),
+            "model": os.getenv("OPENAI_MODEL", "llama3.2:3b" if provider == "ollama" else "gpt-4o-mini"),
         }
 
     raise RuntimeError(f"Unsupported LLM provider: {provider}. Use 'openai' or 'anthropic'.")
@@ -449,7 +547,7 @@ def get_llm_status() -> dict[str, Any]:
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     openai_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_BASE_URL", "")
-    model = os.getenv("OPENAI_MODEL", "llama3.1")
+    model = os.getenv("OPENAI_MODEL", "llama3.2:3b")
 
     if provider == "anthropic" or (not provider and anthropic_key):
         return {
@@ -460,7 +558,8 @@ def get_llm_status() -> dict[str, Any]:
             "message": "Anthropic configured",
         }
 
-    if provider == "ollama" or (base_url and "localhost:11434" in base_url):
+    defaulting_to_ollama = provider == "" and not anthropic_key and not openai_key and not base_url
+    if provider == "ollama" or defaulting_to_ollama or (base_url and "localhost:11434" in base_url):
         ollama_base = base_url.rsplit("/v1", 1)[0] if base_url else "http://localhost:11434"
         try:
             response = requests.get(f"{ollama_base}/api/tags", timeout=5)
@@ -548,6 +647,8 @@ def analyze_with_llm(prompt: str) -> dict[str, Any]:
             "messages": [
                 {"role": "user", "content": prompt},
             ],
+            "response_format": {"type": "json_object"},
+            "max_tokens": 4096,
         },
         timeout=180,
     )
@@ -700,4 +801,3 @@ async def get_history():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)

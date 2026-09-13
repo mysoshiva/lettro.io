@@ -62,11 +62,13 @@ function renderAnalysis(analysis) {
   `;
 }
 
-function renderSelectedFile(files) {
-  const preview = document.getElementById("imagePreview");
-  const selectedFiles = Array.from(files || []);
+let currentFiles = [];
 
-  if (!selectedFiles.length) {
+function renderSelectedFile(files) {
+  currentFiles = Array.from(files || []);
+  const preview = document.getElementById("imagePreview");
+
+  if (!currentFiles.length) {
     preview.className = 'image-preview empty-state';
     preview.innerHTML = `
       <div class="placeholder-copy">
@@ -78,8 +80,8 @@ function renderSelectedFile(files) {
   }
 
   preview.className = 'image-preview';
-  if (selectedFiles.length === 1) {
-    const file = selectedFiles[0];
+  if (currentFiles.length === 1) {
+    const file = currentFiles[0];
     const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
 
     if (isPdf) {
@@ -87,24 +89,41 @@ function renderSelectedFile(files) {
         <div class="file-card">
           <span class="file-type">PDF</span>
           <p class="file-name">${file.name}</p>
+          <button type="button" class="remove-file-btn" data-index="0" aria-label="Remove ${file.name}">&times;</button>
         </div>
       `;
       return;
     }
 
-    preview.innerHTML = `<img src="${URL.createObjectURL(file)}" class="img-fluid" alt="Selected letter preview" />`;
+    preview.innerHTML = `
+      <div class="file-card image-file-card">
+        <img src="${URL.createObjectURL(file)}" class="img-fluid" alt="Selected letter preview" />
+        <button type="button" class="remove-file-btn" data-index="0" aria-label="Remove ${file.name}">&times;</button>
+      </div>
+    `;
     return;
   }
 
-  const fileList = selectedFiles.map((file) => `
+  const fileList = currentFiles.map((file, index) => `
     <div class="file-card">
       <span class="file-type">${file.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'IMG'}</span>
       <p class="file-name">${file.name}</p>
+      <button type="button" class="remove-file-btn" data-index="${index}" aria-label="Remove ${file.name}">&times;</button>
     </div>
   `).join('');
 
   preview.innerHTML = `<div style="width:100%;display:flex;flex-direction:column;gap:10px;">${fileList}</div>`;
 }
+
+// Delegated click handler so remove buttons work no matter how many
+// times the preview gets re-rendered.
+document.getElementById("imagePreview").addEventListener("click", (event) => {
+  const button = event.target.closest(".remove-file-btn");
+  if (!button) return;
+  const index = Number(button.dataset.index);
+  currentFiles.splice(index, 1);
+  renderSelectedFile(currentFiles);
+});
 
 function validateUploadSelection(files) {
   const selectedFiles = Array.from(files || []);
@@ -163,8 +182,7 @@ document.getElementById("letterUpload").addEventListener("change", (event) => {
 });
 
 document.getElementById("scanBtn").addEventListener("click", async () => {
-  const fileInput = document.getElementById("letterUpload");
-  const files = Array.from(fileInput.files || []);
+  const files = currentFiles;
 
   const targetLanguage = document.getElementById("targetLanguage").value;
   const resultsDiv = document.getElementById("results");
@@ -348,4 +366,3 @@ async function updateModelStatus() {
 }
 
 loadSampleLetters();
-updateModelStatus();
