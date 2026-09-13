@@ -387,7 +387,12 @@ def extract_json_from_llm_response(raw_response: str) -> dict[str, Any]:
 
         in_string = False
         escaped = False
+<<<<<<< HEAD
         stack: list[str] = []  # tracks open braces/brackets in actual nesting order
+=======
+        brace_depth = 0
+        bracket_depth = 0
+>>>>>>> 9d31be1caf29c988ddeec9a50ef3707bb8992728
 
         for ch in repaired:
             if in_string:
@@ -402,6 +407,7 @@ def extract_json_from_llm_response(raw_response: str) -> dict[str, Any]:
             if ch == '"':
                 in_string = True
             elif ch == '{':
+<<<<<<< HEAD
                 stack.append('}')
             elif ch == '[':
                 stack.append(']')
@@ -416,10 +422,29 @@ def extract_json_from_llm_response(raw_response: str) -> dict[str, Any]:
         # array (e.g. inside `required_actions: [{...`).
         while stack:
             repaired += stack.pop()
+=======
+                brace_depth += 1
+            elif ch == '}':
+                brace_depth = max(0, brace_depth - 1)
+            elif ch == '[':
+                bracket_depth += 1
+            elif ch == ']':
+                bracket_depth = max(0, bracket_depth - 1)
+
+        if in_string:
+            repaired += '"'
+        while brace_depth > 0:
+            repaired += "}"
+            brace_depth -= 1
+        while bracket_depth > 0:
+            repaired += "]"
+            bracket_depth -= 1
+>>>>>>> 9d31be1caf29c988ddeec9a50ef3707bb8992728
 
         repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
         return repaired
 
+<<<<<<< HEAD
     def find_first_balanced_object(text: str) -> Optional[str]:
         """Return the exact substring of the first complete top-level
         {...} object, discarding anything before or after it. This is
@@ -458,6 +483,9 @@ def extract_json_from_llm_response(raw_response: str) -> dict[str, Any]:
     exact_object = find_first_balanced_object(cleaned)
     if exact_object:
         candidates.insert(0, exact_object)
+=======
+    candidates = [cleaned]
+>>>>>>> 9d31be1caf29c988ddeec9a50ef3707bb8992728
     if "{" in cleaned:
         start = cleaned.find("{")
         payload = cleaned[start:]
