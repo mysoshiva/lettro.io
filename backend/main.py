@@ -681,6 +681,7 @@ def analyze_with_llm(prompt: str) -> dict[str, Any]:
                 {"role": "user", "content": prompt},
             ],
             "response_format": {"type": "json_object"},
+            "temperature": 0.1,
             "max_tokens": 4096,
         },
         timeout=180,
