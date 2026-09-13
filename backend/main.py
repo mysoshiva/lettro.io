@@ -157,6 +157,9 @@ def normalize_analysis_payload(payload: dict[str, Any]) -> dict[str, Any]:
     for key in ["target_language", "sender_address", "sender_email", "sender_phone"]:
         normalized.pop(key, None)
 
+    if "deadline" not in normalized and "deadlines" in normalized:
+        normalized["deadline"] = normalized.pop("deadlines")
+
     if "detected_language" not in normalized:
         detected = normalized.get("language") or normalized.get("target_language") or "und"
         normalized["detected_language"] = detected if isinstance(detected, str) else "und"
@@ -372,21 +375,76 @@ def extract_json_from_llm_response(raw_response: str) -> dict[str, Any]:
     if not cleaned:
         raise ValueError("LLM returned an empty response.")
 
-    candidates = [cleaned]
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if 0 <= start < end:
-        candidates.append(cleaned[start : end + 1])
+    def repair_incomplete_json(text: str) -> str:
+        repaired = text.strip()
+        repaired = repaired.replace('"deadlines"', '"deadline"')
+        if not repaired.startswith("{"):
+            start = repaired.find("{")
+            if start >= 0:
+                repaired = repaired[start:]
+            else:
+                return repaired
 
-    for candidate in candidates:
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            normalized = re.sub(r",\s*([}\]])", r"\1", candidate)
-            try:
-                return json.loads(normalized)
-            except json.JSONDecodeError:
+        in_string = False
+        escaped = False
+        brace_depth = 0
+        bracket_depth = 0
+
+        for ch in repaired:
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
                 continue
+
+            if ch == '"':
+                in_string = True
+            elif ch == '{':
+                brace_depth += 1
+            elif ch == '}':
+                brace_depth = max(0, brace_depth - 1)
+            elif ch == '[':
+                bracket_depth += 1
+            elif ch == ']':
+                bracket_depth = max(0, bracket_depth - 1)
+
+        if in_string:
+            repaired += '"'
+        while brace_depth > 0:
+            repaired += "}"
+            brace_depth -= 1
+        while bracket_depth > 0:
+            repaired += "]"
+            bracket_depth -= 1
+
+        repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
+        return repaired
+
+    candidates = [cleaned]
+    if "{" in cleaned:
+        start = cleaned.find("{")
+        payload = cleaned[start:]
+        candidates.append(payload)
+        candidates.append(repair_incomplete_json(payload))
+
+    for candidate in list(dict.fromkeys(candidates)):
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            continue
+
+        repaired = repair_incomplete_json(candidate)
+        try:
+            parsed = json.loads(repaired)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            continue
 
     raise ValueError(f"LLM response was not valid JSON: {cleaned[:200]}")
 

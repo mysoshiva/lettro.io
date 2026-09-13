@@ -167,6 +167,15 @@ def test_normalize_analysis_payload_handles_real_local_model_output_shape():
     assert "sender_address" not in normalized
 
 
+def test_extract_json_from_llm_response_recovers_plural_deadline_key_and_truncated_string():
+    response = '{"sender":"Bürgeramt Stadt Heilbronn","letter_type":"Notice","deadlines":{"date":"2026-10-12","is_relative_to_receipt":false,"raw_text":"b'
+    parsed = __import__("backend.main", fromlist=["extract_json_from_llm_response"]).extract_json_from_llm_response(response)
+
+    assert parsed["sender"] == "Bürgeramt Stadt Heilbronn"
+    assert parsed["deadline"]["date"] == "2026-10-12"
+    assert parsed["deadline"]["raw_text"] == "b"
+
+
 def test_analyze_with_llm_handles_anthropic_thinking_block(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-test-key")
