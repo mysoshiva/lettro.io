@@ -34,9 +34,13 @@ function renderAnalysis(analysis) {
     ? analysis.deadline.date
     : (analysis.deadline && analysis.deadline.raw_text ? analysis.deadline.raw_text : 'No deadline stated');
 
+  const deadlineEvidenceText = analysis.deadline && (analysis.deadline.evidence || analysis.deadline.raw_text)
+    ? (analysis.deadline.evidence || analysis.deadline.raw_text)
+    : 'No explicit deadline wording was found in the letter.';
+
   const deadlineEvidence = analysis.deadline && (analysis.deadline.evidence || analysis.deadline.raw_text)
-    ? `<div class="evidence-block"><strong>Evidence:</strong> ${escapeHtml(analysis.deadline.evidence || analysis.deadline.raw_text)}</div>`
-    : '';
+    ? `<div class="evidence-block"><strong>Evidence:</strong> ${escapeHtml(deadlineEvidenceText)}</div>`
+    : `<div class="evidence-block"><strong>Evidence:</strong> ${escapeHtml(deadlineEvidenceText)}</div>`;
 
   const requiredActions = Array.isArray(analysis.required_actions) && analysis.required_actions.length
     ? analysis.required_actions.map((item) => {
@@ -178,6 +182,12 @@ async function loadSampleLetters() {
     const response = await fetch(`${API_BASE}/sample_letters`);
     const data = await response.json();
     select.innerHTML = '';
+
+    if (!Array.isArray(data.letters) || !data.letters.length) {
+      select.innerHTML = '<option value="">No sample letters available</option>';
+      return;
+    }
+
     data.letters.forEach((filename) => {
       const option = document.createElement('option');
       option.value = filename;
