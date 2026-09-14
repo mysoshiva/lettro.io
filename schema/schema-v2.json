@@ -2,6 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "LettroLetterAnalysis",
   "type": "object",
+  "additionalProperties": false,
   "required": [
     "detected_language",
     "sender",
@@ -36,6 +37,7 @@
     },
     "deadline": {
       "type": "object",
+      "additionalProperties": false,
       "properties": {
         "date": {
           "type": ["string", "null"],
@@ -53,14 +55,19 @@
           "type": "string",
           "enum": ["high", "medium", "low"],
           "description": "Confidence in the deadline extraction."
+        },
+        "evidence": {
+          "type": ["string", "null"],
+          "description": "The exact source wording that supports the deadline extraction."
         }
       },
-      "required": ["date", "raw_text", "is_relative_to_receipt", "confidence"]
+      "required": ["date", "raw_text", "is_relative_to_receipt", "confidence", "evidence"]
     },
     "required_actions": {
       "type": "array",
       "items": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "action": {
             "type": "string",
@@ -70,6 +77,10 @@
             "type": "string",
             "enum": ["high", "medium", "low"],
             "description": "Confidence in the action extraction."
+          },
+          "evidence": {
+            "type": ["string", "null"],
+            "description": "The exact source wording that supports the action extraction."
           }
         },
         "required": ["action", "confidence"]

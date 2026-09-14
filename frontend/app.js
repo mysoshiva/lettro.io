@@ -16,6 +16,15 @@ const API_BASE = (() => {
   return 'http://localhost:8001';
 })();
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function renderAnalysis(analysis) {
   const resultsDiv = document.getElementById("results");
   const actionTag = analysis.requires_action ? 'action' : 'clear';
@@ -26,28 +35,28 @@ function renderAnalysis(analysis) {
     : (analysis.deadline && analysis.deadline.raw_text ? analysis.deadline.raw_text : 'No deadline stated');
 
   const requiredActions = Array.isArray(analysis.required_actions) && analysis.required_actions.length
-    ? analysis.required_actions.map((item) => `<li>${item.action}</li>`).join('')
+    ? analysis.required_actions.map((item) => `<li>${escapeHtml(item.action || 'Action')}</li>`).join('')
     : '<li>No immediate action is required.</li>';
 
   const consequences = analysis.consequences_if_missed || 'No explicit consequence was stated in the letter.';
 
   resultsDiv.innerHTML = `
     <div class="result-card">
-      <h3>${analysis.sender || 'Unknown sender'}</h3>
+      <h3>${escapeHtml(analysis.sender || 'Unknown sender')}</h3>
       <div class="tag ${actionTag}">${actionLabel}</div>
-      <p><strong>Type:</strong> ${analysis.letter_type || 'Unknown'}</p>
-      <p><strong>Detected language:</strong> ${analysis.detected_language || 'Unknown'}</p>
-      <p><strong>Overall confidence:</strong> ${analysis.overall_confidence || 'low'}</p>
+      <p><strong>Type:</strong> ${escapeHtml(analysis.letter_type || 'Unknown')}</p>
+      <p><strong>Detected language:</strong> ${escapeHtml(analysis.detected_language || 'Unknown')}</p>
+      <p><strong>Overall confidence:</strong> ${escapeHtml(analysis.overall_confidence || 'low')}</p>
     </div>
 
     <div class="result-card">
       <h4>Summary</h4>
-      <p>${analysis.summary}</p>
+      <p>${escapeHtml(analysis.summary)}</p>
     </div>
 
     <div class="result-card">
       <h4>Deadline</h4>
-      <p>${deadlineText}</p>
+      <p>${escapeHtml(deadlineText)}</p>
     </div>
 
     <div class="result-card">
@@ -57,7 +66,7 @@ function renderAnalysis(analysis) {
 
     <div class="result-card">
       <h4>What happens if you miss it?</h4>
-      <p>${consequences}</p>
+      <p>${escapeHtml(consequences)}</p>
     </div>
   `;
 }
@@ -346,9 +355,9 @@ document.getElementById("historyBtn").addEventListener("click", async () => {
       }
       scanDiv.innerHTML = `
         <div class="card-body">
-          <h5>Scan #${scan.id} (${scan.timestamp})</h5>
-          <p><strong>Language:</strong> ${scan.target_language}</p>
-          <pre>${formattedAnalysis}</pre>
+          <h5>Scan #${escapeHtml(scan.id)} (${escapeHtml(scan.timestamp)})</h5>
+          <p><strong>Language:</strong> ${escapeHtml(scan.target_language)}</p>
+          <pre>${escapeHtml(formattedAnalysis)}</pre>
         </div>
       `;
       historyList.appendChild(scanDiv);

@@ -8,6 +8,7 @@ __pycache__/
 .env.*
 !.env.example
 lettro.db
+data/
 *.sqlite3
 
 # OS/editor noise
