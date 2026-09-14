@@ -4,8 +4,10 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 
 from backend.main import (
+    app,
     build_prompt,
     detect_document_type,
     extract_text_from_document,
@@ -126,12 +128,61 @@ def test_normalize_analysis_payload_keeps_evidence_metadata():
     assert normalized["required_actions"][0]["evidence"] == "Bitte bringen Sie Ihren Ausweis mit."
 
 
+def test_redact_text_masks_financial_and_reference_numbers():
+    text = "IBAN DE89370400440532013000, Aktenzeichen 32-AB-12345, Kundennummer 123456789, Steuer-ID 12/345/67890"
+    redacted = redact_text(text)
+    assert "DE89370400440532013000" not in redacted
+    assert "32-AB-12345" not in redacted
+    assert "123456789" not in redacted
+    assert "12/345/67890" not in redacted
+
+
 def test_redact_text_keeps_dates_unchanged():
     text = "Deadline: 12.10.2026. Please answer by 31.08.2026."
     redacted = redact_text(text)
     assert "12.10.2026" in redacted
     assert "31.08.2026" in redacted
     assert "[DOB]" not in redacted
+
+
+def test_redact_text_masks_more_financial_and_reference_numbers():
+    text = "IBAN DE89370400440532013000, Aktenzeichen 32-AB-12345, Kundennummer 123456789, Steuer-ID 12/345/67890, Vertragsnummer 9876543210"
+    redacted = redact_text(text)
+    assert "DE89370400440532013000" not in redacted
+    assert "32-AB-12345" not in redacted
+    assert "123456789" not in redacted
+    assert "12/345/67890" not in redacted
+    assert "9876543210" not in redacted
+
+
+client = TestClient(app)
+
+
+def test_save_scan_respects_opt_in_history():
+    response = client.post(
+        "/save_scan",
+        json={
+            "text": "Hello there",
+            "target_language": "en",
+            "analysis": "{}",
+            "save_history": False,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json() == {"status": "success", "saved": False}
+
+
+def test_validate_upload_batch_rejects_magic_mismatch():
+    class FakeFile:
+        filename = "evil.exe"
+        content_type = "image/png"
+        size = 32
+
+        def read(self):
+            return b"PNG\x00\x00\x00\x00not-a-real-png"
+
+    with pytest.raises(ValueError, match="Unsupported file format"):
+        validate_upload_batch([FakeFile()])
 
 
 def test_get_llm_config_uses_anthropic_when_configured(monkeypatch):

@@ -34,8 +34,15 @@ function renderAnalysis(analysis) {
     ? analysis.deadline.date
     : (analysis.deadline && analysis.deadline.raw_text ? analysis.deadline.raw_text : 'No deadline stated');
 
+  const deadlineEvidence = analysis.deadline && (analysis.deadline.evidence || analysis.deadline.raw_text)
+    ? `<div class="evidence-block"><strong>Evidence:</strong> ${escapeHtml(analysis.deadline.evidence || analysis.deadline.raw_text)}</div>`
+    : '';
+
   const requiredActions = Array.isArray(analysis.required_actions) && analysis.required_actions.length
-    ? analysis.required_actions.map((item) => `<li>${escapeHtml(item.action || 'Action')}</li>`).join('')
+    ? analysis.required_actions.map((item) => {
+        const evidence = item.evidence ? `<div class="evidence-note">Evidence: ${escapeHtml(item.evidence)}</div>` : '';
+        return `<li>${escapeHtml(item.action || 'Action')}${evidence}</li>`;
+      }).join('')
     : '<li>No immediate action is required.</li>';
 
   const consequences = analysis.consequences_if_missed || 'No explicit consequence was stated in the letter.';
@@ -57,6 +64,7 @@ function renderAnalysis(analysis) {
     <div class="result-card">
       <h4>Deadline</h4>
       <p>${escapeHtml(deadlineText)}</p>
+      ${deadlineEvidence}
     </div>
 
     <div class="result-card">
@@ -97,8 +105,8 @@ function renderSelectedFile(files) {
       preview.innerHTML = `
         <div class="file-card">
           <span class="file-type">PDF</span>
-          <p class="file-name">${file.name}</p>
-          <button type="button" class="remove-file-btn" data-index="0" aria-label="Remove ${file.name}">&times;</button>
+          <p class="file-name">${escapeHtml(file.name)}</p>
+          <button type="button" class="remove-file-btn" data-index="0" aria-label="Remove ${escapeHtml(file.name)}">&times;</button>
         </div>
       `;
       return;
@@ -107,7 +115,7 @@ function renderSelectedFile(files) {
     preview.innerHTML = `
       <div class="file-card image-file-card">
         <img src="${URL.createObjectURL(file)}" class="img-fluid" alt="Selected letter preview" />
-        <button type="button" class="remove-file-btn" data-index="0" aria-label="Remove ${file.name}">&times;</button>
+        <button type="button" class="remove-file-btn" data-index="0" aria-label="Remove ${escapeHtml(file.name)}">&times;</button>
       </div>
     `;
     return;
@@ -116,8 +124,8 @@ function renderSelectedFile(files) {
   const fileList = currentFiles.map((file, index) => `
     <div class="file-card">
       <span class="file-type">${file.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'IMG'}</span>
-      <p class="file-name">${file.name}</p>
-      <button type="button" class="remove-file-btn" data-index="${index}" aria-label="Remove ${file.name}">&times;</button>
+      <p class="file-name">${escapeHtml(file.name)}</p>
+      <button type="button" class="remove-file-btn" data-index="${index}" aria-label="Remove ${escapeHtml(file.name)}">&times;</button>
     </div>
   `).join('');
 
@@ -252,11 +260,14 @@ document.getElementById("scanBtn").addEventListener("click", async () => {
     const analysis = analysisData.analysis;
     renderAnalysis(analysis);
 
-    await fetch(`${API_BASE}/save_scan`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, target_language: targetLanguage, analysis: JSON.stringify(analysis) }),
-    });
+    const saveHistory = document.getElementById('saveHistoryToggle')?.checked ?? false;
+    if (saveHistory) {
+      await fetch(`${API_BASE}/save_scan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, target_language: targetLanguage, analysis: JSON.stringify(analysis), save_history: true }),
+      });
+    }
   } catch (error) {
     resultsDiv.innerHTML = `<p class="text-danger">Error: ${error.message}</p>`;
   }

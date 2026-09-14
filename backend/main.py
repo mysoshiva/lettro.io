@@ -118,6 +118,9 @@ def redact_text(text: str) -> str:
     redacted = re.sub(r"\b\d{1,2}\.\d{1,2}\.\d{2,4}\b", replace_date, redacted)
     redacted = re.sub(r"(?<![A-Z0-9])(?:\+?\d[\d\s().-]{7,}\d)(?![A-Z0-9])", "[PHONE]", redacted)
     redacted = re.sub(r"\b\d{5}\b", "[ZIP]", redacted)
+    redacted = re.sub(r"\bIBAN\s+[A-Z]{2}[A-Z0-9]{11,30}\b", "IBAN [IBAN]", redacted, flags=re.IGNORECASE)
+    redacted = re.sub(r"\b(?:Aktenzeichen|Referenz|Fallnummer|Kundennummer|Steuer-ID|Steuernummer|Versicherungsnummer|Kennnummer|Vertragsnummer|Auftragsnummer)\s*[:=#-]?\s*[A-Z0-9/.-]{3,}\b", "[REFERENCE]", redacted, flags=re.IGNORECASE)
+    redacted = re.sub(r"\b(?:DE|AT|CH)[A-Z0-9]{10,30}\b", "[IBAN]", redacted, flags=re.IGNORECASE)
     redacted = re.sub(r"\bVIN\s+[A-HJ-NPR-Z0-9]{10,17}\b", "VIN [VIN]", redacted)
     redacted = re.sub(r"(?<![A-Z0-9])(?:[A-ZÄÖÜ]{1,3}-?\d{1,4})(?![A-Z0-9])", "[LICENSE_PLATE]", redacted)
     redacted = re.sub(r"\b(?:Herr|Frau|Herrn|Frauen|Sehr geehrter Herr|Sehr geehrte Frau)\s+[A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)*\b", "Herr [PERSON]", redacted)
@@ -334,9 +337,29 @@ def is_supported_upload(filename: str, content_type: Optional[str] = None) -> bo
     lowered_name = (filename or "").lower()
     mime_type = (content_type or "").lower()
     extension = lowered_name.rsplit(".", 1)[-1] if "." in lowered_name else ""
-    is_supported_ext = extension in SUPPORTED_UPLOAD_TYPES
+
+    if extension and extension not in SUPPORTED_UPLOAD_TYPES:
+        return False
+
     is_supported_mime = mime_type in SUPPORTED_MIME_TYPES or mime_type.startswith("image/") and mime_type.split("/")[-1] in {"png", "jpeg", "jpg", "webp", "tiff", "tif"}
-    return is_supported_ext or is_supported_mime
+    if mime_type and not is_supported_mime:
+        return False
+
+    return bool(extension or mime_type) and (extension in SUPPORTED_UPLOAD_TYPES or is_supported_mime)
+
+
+def detect_file_signature(contents: bytes) -> Optional[str]:
+    if contents.startswith(b"%PDF"):
+        return "pdf"
+    if contents.startswith((b"\x89PNG\r\n\x1a\n", b"PNG")):
+        return "png"
+    if contents.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if contents.startswith(b"RIFF") and b"WEBP" in contents[:12]:
+        return "webp"
+    if contents.startswith((b"II*\x00", b"MM\x00*")):
+        return "tiff"
+    return None
 
 
 def read_upload_bytes(file: Any) -> bytes:
@@ -381,8 +404,18 @@ def validate_upload_batch(files: list[Any]) -> list[Any]:
     for file in files:
         filename = getattr(file, "filename", "") or ""
         mime_type = getattr(file, "content_type", "") or ""
+        contents = read_upload_bytes(file)
+        signature = detect_file_signature(contents)
+        expected = detect_document_type(filename, mime_type)
         if not is_supported_upload(filename, mime_type):
             unsupported.append(filename or "unknown file")
+            continue
+        if signature is not None and signature != expected:
+            unsupported.append(filename or "unknown file")
+            continue
+        if signature is None and expected not in {"pdf", "image"}:
+            unsupported.append(filename or "unknown file")
+            continue
 
     if unsupported:
         raise ValueError(
@@ -849,8 +882,16 @@ async def analyze(request: AnalysisRequest):
 
 
 @app.post("/save_scan")
-async def save_scan(request: AnalysisRequest):
+async def save_scan(payload: dict[str, Any]):
     try:
+        save_history = bool(payload.get("save_history", False))
+        if not save_history:
+            return {"status": "success", "saved": False}
+
+        text = payload.get("text") or ""
+        analysis = payload.get("analysis") or "{}"
+        target_language = payload.get("target_language") or "en"
+
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -858,11 +899,11 @@ async def save_scan(request: AnalysisRequest):
             INSERT INTO scans (original_text, analysis, target_language, timestamp)
             VALUES (?, ?, ?, ?)
             """,
-            (redact_text(request.text), request.analysis, request.target_language, datetime.now()),
+            (redact_text(text), analysis, target_language, datetime.now()),
         )
         conn.commit()
         conn.close()
-        return {"status": "success"}
+        return {"status": "success", "saved": True}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
