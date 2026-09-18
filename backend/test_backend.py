@@ -178,11 +178,11 @@ def test_validate_upload_batch_rejects_magic_mismatch():
         content_type = "image/png"
         size = 32
 
-        def read(self):
+        async def read(self):
             return b"PNG\x00\x00\x00\x00not-a-real-png"
 
     with pytest.raises(ValueError, match="Unsupported file format"):
-        validate_upload_batch([FakeFile()])
+        asyncio.run(validate_upload_batch([FakeFile()]))
 
 
 def test_get_llm_config_uses_anthropic_when_configured(monkeypatch):
@@ -224,7 +224,7 @@ def test_get_llm_config_defaults_to_qwen3_4b_for_local_ollama(monkeypatch):
     config = get_llm_config()
 
     assert config["provider"] == "openai"
-    assert config["api_base"] == "http://localhost:11434/v1"
+    assert config["api_base"] == "http://127.0.0.1:11434/v1"
     assert config["model"] == "qwen3:4b"
 
 
@@ -387,6 +387,61 @@ def test_analyze_with_llm_handles_anthropic_thinking_block(monkeypatch):
     assert result["summary"] == "This is a valid summary."
 
 
+def test_analyze_with_llm_uses_ollama_native_schema_endpoint(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OPENAI_API_KEY", "ollama")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:11434/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "qwen3:4b")
+
+    captured_request = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {
+                            "detected_language": "de",
+                            "sender": "Example Sender",
+                            "letter_type": "official notice",
+                            "requires_action": True,
+                            "summary": "This is a valid summary.",
+                            "deadline": {
+                                "date": "2026-10-12",
+                                "raw_text": "until 12.10.2026",
+                                "is_relative_to_receipt": False,
+                                "confidence": "high",
+                            },
+                            "required_actions": [{"action": "Review the letter.", "confidence": "high"}],
+                            "consequences_if_missed": "Further action may follow.",
+                            "overall_confidence": "high",
+                        }
+                    ),
+                }
+            }
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured_request["url"] = url
+        captured_request["json"] = json
+        return FakeResponse()
+
+    monkeypatch.setattr("backend.main.requests.post", fake_post)
+
+    result = __import__("backend.main", fromlist=["analyze_with_llm"]).analyze_with_llm("hello")
+
+    # Hits Ollama's native /api/chat, not the OpenAI-compatible /chat/completions —
+    # that's the only endpoint that honors a full JSON Schema in `format`.
+    assert captured_request["url"] == "http://127.0.0.1:11434/api/chat"
+    assert "format" in captured_request["json"]
+    assert captured_request["json"]["format"]["type"] == "object"
+    assert "properties" in captured_request["json"]["format"]
+    assert "$schema" not in captured_request["json"]["format"]
+    assert result["summary"] == "This is a valid summary."
+
+
 @pytest.mark.parametrize(
     "filename, content_type, expected",
     [
@@ -430,18 +485,24 @@ def test_validate_upload_batch_enforces_file_count_and_size_limits():
     files = [SimpleNamespace(filename=f"doc-{i}.pdf", content_type="application/pdf", size=2 * 1024 * 1024) for i in range(31)]
 
     with pytest.raises(ValueError, match="30"):
-        validate_upload_batch(files)
+        asyncio.run(validate_upload_batch(files))
 
+    # Exactly 20 MB is allowed — "20 MB maximum" should mean 20 MB fits,
+    # not that it's silently rejected. One byte over is what triggers it.
     files = [SimpleNamespace(filename="letter.pdf", content_type="application/pdf", size=20 * 1024 * 1024)]
+    validated = asyncio.run(validate_upload_batch(files))
+    assert len(validated) == 1
+
+    files = [SimpleNamespace(filename="letter.pdf", content_type="application/pdf", size=20 * 1024 * 1024 + 1)]
     with pytest.raises(ValueError, match="20 MB"):
-        validate_upload_batch(files)
+        asyncio.run(validate_upload_batch(files))
 
 
 def test_validate_upload_batch_rejects_unsupported_mime_types():
     files = [SimpleNamespace(filename="notes.exe", content_type="application/x-msdownload", size=1024)]
 
     with pytest.raises(ValueError, match="supported"):
-        validate_upload_batch(files)
+        asyncio.run(validate_upload_batch(files))
 
 
 def test_extract_text_from_document_falls_back_to_ocr_for_rasterized_pdf(monkeypatch):
