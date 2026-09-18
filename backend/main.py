@@ -5,6 +5,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 import io
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -54,6 +55,19 @@ SUPPORTED_MIME_TYPES = {
     "image/webp",
     "image/tiff",
 }
+
+logger = logging.getLogger("lettro")
+
+
+def unexpected_error(exc: Exception, context: str) -> HTTPException:
+    """Log the real exception server-side, return only a generic message
+    to the client. The raw exception text can contain file paths, library
+    internals, or other implementation details that shouldn't leak to a
+    browser — anyone debugging this should be reading the server log,
+    not the HTTP response body."""
+    logger.exception("Unexpected error during %s", context)
+    return HTTPException(status_code=500, detail=f"Unable to complete {context}. Please try again.")
+
 
 app = FastAPI()
 
@@ -116,12 +130,24 @@ def redact_text(text: str) -> str:
         return placeholder
 
     redacted = re.sub(r"\b\d{1,2}\.\d{1,2}\.\d{2,4}\b", replace_date, redacted)
-    redacted = re.sub(r"(?<![A-Z0-9])(?:\+?\d[\d\s().-]{7,}\d)(?![A-Z0-9])", "[PHONE]", redacted)
-    redacted = re.sub(r"\b\d{5}\b", "[ZIP]", redacted)
+
+    # Compound/labeled patterns run first, before the generic short-token
+    # patterns below — otherwise a generic pattern (e.g. the 5-digit ZIP
+    # matcher) can eat part of a longer reference number before the more
+    # specific pattern gets a chance to match the whole thing, leaving a
+    # fragmented result like "[REFERENCE]-[ZIP]" instead of one clean tag.
     redacted = re.sub(r"\bIBAN\s+[A-Z]{2}[A-Z0-9]{11,30}\b", "IBAN [IBAN]", redacted, flags=re.IGNORECASE)
-    redacted = re.sub(r"\b(?:Aktenzeichen|Referenz|Fallnummer|Kundennummer|Steuer-ID|Steuernummer|Versicherungsnummer|Kennnummer|Vertragsnummer|Auftragsnummer)\s*[:=#-]?\s*[A-Z0-9/.-]{3,}\b", "[REFERENCE]", redacted, flags=re.IGNORECASE)
+    redacted = re.sub(r"\b(?:Aktenzeichen|Referenz|Fallnummer|Kundennummer|Steuer-ID|Steuernummer|Versicherungsnummer|Kennnummer|Vertragsnummer|Auftragsnummer|Fahrgestellnummer|Fahrzeug-Identifizierungs-Nr)\s*[:=#-]?\s*[A-Z0-9/.-]{3,}\b", "[REFERENCE]", redacted, flags=re.IGNORECASE)
+    # Bare VINs (17-char, excludes I/O/Q per ISO 3779) that appear without
+    # a preceding German label, e.g. copy-pasted from a registration form.
+    redacted = re.sub(r"\b[A-HJ-NPR-Z0-9]{17}\b", "[VIN]", redacted)
     redacted = re.sub(r"\b(?:DE|AT|CH)[A-Z0-9]{10,30}\b", "[IBAN]", redacted, flags=re.IGNORECASE)
     redacted = re.sub(r"\bVIN\s+[A-HJ-NPR-Z0-9]{10,17}\b", "VIN [VIN]", redacted)
+
+    # Generic short-token patterns — deliberately run after the compound
+    # patterns above.
+    redacted = re.sub(r"(?<![A-Z0-9])(?:\+?\d[\d\s().-]{7,}\d)(?![A-Z0-9])", "[PHONE]", redacted)
+    redacted = re.sub(r"\b\d{5}\b", "[ZIP]", redacted)
     redacted = re.sub(r"(?<![A-Z0-9])(?:[A-ZÄÖÜ]{1,3}-?\d{1,4})(?![A-Z0-9])", "[LICENSE_PLATE]", redacted)
     redacted = re.sub(r"\b(?:Herr|Frau|Herrn|Frauen|Sehr geehrter Herr|Sehr geehrte Frau)\s+[A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)*\b", "Herr [PERSON]", redacted)
     redacted = re.sub(r"\b(?:Login|Benutzername|User|PIN)\s*[:=]?\s*[A-Z0-9]+\b", "[LOGIN]", redacted)
@@ -362,28 +388,28 @@ def detect_file_signature(contents: bytes) -> Optional[str]:
     return None
 
 
-def read_upload_bytes(file: Any) -> bytes:
+async def read_upload_bytes(file: Any) -> bytes:
     if not hasattr(file, "read"):
         return b""
 
     try:
-        current_pos = file.tell()
+        current_pos = await file.tell()
     except (AttributeError, OSError):
         current_pos = None
 
-    contents = file.read()
+    contents = await file.read()
     try:
         if current_pos is not None:
-            file.seek(current_pos)
+            await file.seek(current_pos)
         else:
-            file.seek(0)
+            await file.seek(0)
     except (AttributeError, OSError):
         pass
 
     return contents or b""
 
 
-def validate_upload_batch(files: list[Any]) -> list[Any]:
+async def validate_upload_batch(files: list[Any]) -> list[Any]:
     if files is None:
         raise ValueError("No files selected.")
 
@@ -394,23 +420,29 @@ def validate_upload_batch(files: list[Any]) -> list[Any]:
     for file in files:
         size = getattr(file, "size", None)
         if size is None:
-            size = len(read_upload_bytes(file))
+            size = len(await read_upload_bytes(file))
         total_size += int(size or 0)
 
-    if total_size >= MAX_TOTAL_UPLOAD_BYTES:
+    if total_size > MAX_TOTAL_UPLOAD_BYTES:
         raise ValueError(f"Total upload size exceeds {MAX_TOTAL_UPLOAD_BYTES / (1024 * 1024):.0f} MB limit.")
+
+    IMAGE_SIGNATURES = {"png", "jpg", "webp", "tiff"}
 
     unsupported = []
     for file in files:
         filename = getattr(file, "filename", "") or ""
         mime_type = getattr(file, "content_type", "") or ""
-        contents = read_upload_bytes(file)
+        contents = await read_upload_bytes(file)
         signature = detect_file_signature(contents)
         expected = detect_document_type(filename, mime_type)
+        # detect_file_signature returns the specific format (png/jpg/webp/tiff/pdf),
+        # while detect_document_type only returns the broad category (image/pdf) —
+        # compare them at the same granularity or every real image gets rejected.
+        signature_category = "image" if signature in IMAGE_SIGNATURES else signature
         if not is_supported_upload(filename, mime_type):
             unsupported.append(filename or "unknown file")
             continue
-        if signature is not None and signature != expected:
+        if signature is not None and signature_category != expected:
             unsupported.append(filename or "unknown file")
             continue
         if signature is None and expected not in {"pdf", "image"}:
@@ -654,7 +686,7 @@ def get_llm_config() -> dict[str, str]:
         return {
             "provider": "openai",
             "api_key": api_key,
-            "api_base": os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1" if provider == "ollama" else "https://api.openai.com/v1"),
+            "api_base": os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:11434/v1" if provider == "ollama" else "https://api.openai.com/v1"),
             "model": os.getenv("OPENAI_MODEL", "qwen3:4b" if provider == "ollama" else "gpt-4o-mini"),
         }
 
@@ -678,8 +710,8 @@ def get_llm_status() -> dict[str, Any]:
         }
 
     defaulting_to_ollama = provider == "" and not anthropic_key and not openai_key and not base_url
-    if provider == "ollama" or defaulting_to_ollama or (base_url and "localhost:11434" in base_url):
-        ollama_base = base_url.rsplit("/v1", 1)[0] if base_url else "http://localhost:11434"
+    if provider == "ollama" or defaulting_to_ollama or (base_url and ("127.0.0.1:11434" in base_url or "localhost:11434" in base_url)):
+        ollama_base = base_url.rsplit("/v1", 1)[0] if base_url else "http://127.0.0.1:11434"
         try:
             response = requests.get(f"{ollama_base}/api/tags", timeout=5)
             if response.status_code == 200:
@@ -735,6 +767,61 @@ def get_llm_status() -> dict[str, Any]:
     }
 
 
+def is_ollama_endpoint(api_base: str) -> bool:
+    lowered = (api_base or "").lower()
+    return "127.0.0.1:11434" in lowered or "localhost:11434" in lowered
+
+
+_OLLAMA_RESPONSE_SCHEMA_CACHE: Optional[dict[str, Any]] = None
+
+
+def load_ollama_response_schema() -> dict[str, Any]:
+    """Ollama's `format` field (since 0.3.0) accepts a JSON Schema object
+    and constrains token-level decoding to match it — a much stronger
+    guarantee than asking for "json_object" mode. We reuse schema-v2.json
+    directly rather than maintaining a second copy, just stripping the
+    `$schema` URI key that Ollama doesn't need."""
+    global _OLLAMA_RESPONSE_SCHEMA_CACHE
+    if _OLLAMA_RESPONSE_SCHEMA_CACHE is None:
+        with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
+            schema = json.load(f)
+        schema = dict(schema)
+        schema.pop("$schema", None)
+        _OLLAMA_RESPONSE_SCHEMA_CACHE = schema
+    return _OLLAMA_RESPONSE_SCHEMA_CACHE
+
+
+def analyze_with_ollama_native(prompt: str, api_base: str, model: str) -> dict[str, Any]:
+    native_base = api_base.rstrip("/")
+    if native_base.endswith("/v1"):
+        native_base = native_base[: -len("/v1")]
+
+    response = requests.post(
+        f"{native_base}/api/chat",
+        headers={"Content-Type": "application/json"},
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "format": load_ollama_response_schema(),
+            "options": {"temperature": 0},
+            "stream": False,
+        },
+        timeout=180,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f"LLM request failed: {response.status_code} {response.text}")
+
+    body = response.json()
+    raw_content = body.get("message", {}).get("content", "")
+    # Schema-constrained decoding makes this the common case rather than
+    # the exception, but we deliberately still run it through the same
+    # repair/extraction path as every other provider — constrained
+    # decoding is a strong guarantee, not an absolute one across every
+    # model/version, and keeping one normalization path is safer than
+    # trusting each provider differently.
+    return extract_json_from_llm_response(raw_content)
+
+
 def analyze_with_llm(prompt: str) -> dict[str, Any]:
     config = get_llm_config()
     api_key = config["api_key"]
@@ -762,6 +849,9 @@ def analyze_with_llm(prompt: str) -> dict[str, Any]:
         body = response.json()
         raw_content = extract_text_from_anthropic_response(body)
         return extract_json_from_llm_response(raw_content)
+
+    if is_ollama_endpoint(api_base):
+        return analyze_with_ollama_native(prompt, api_base, model)
 
     response = requests.post(
         f"{api_base.rstrip('/')}/chat/completions",
@@ -791,7 +881,7 @@ def analyze_with_llm(prompt: str) -> dict[str, Any]:
 @app.post("/ocr")
 async def ocr(files: list[UploadFile] = File(...)):
     try:
-        validated = validate_upload_batch(files)
+        validated = await validate_upload_batch(files)
         documents = []
         combined_text = []
 
@@ -815,7 +905,7 @@ async def ocr(files: list[UploadFile] = File(...)):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise unexpected_error(exc, "document processing")
 
 
 @app.get("/sample_letters")
@@ -857,7 +947,7 @@ async def run_sample(payload: dict[str, str]):
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise unexpected_error(exc, "sample analysis")
 
 
 @app.post("/analyze")
@@ -878,7 +968,7 @@ async def analyze(request: AnalysisRequest):
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise unexpected_error(exc, "letter analysis")
 
 
 @app.post("/save_scan")
@@ -905,7 +995,7 @@ async def save_scan(payload: dict[str, Any]):
         conn.close()
         return {"status": "success", "saved": True}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise unexpected_error(exc, "saving scan history")
 
 
 @app.get("/history")
@@ -930,9 +1020,8 @@ async def get_history():
             )
         return {"history": history}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise unexpected_error(exc, "loading scan history")
 
 
 if __name__ == "__main__":
     import uvicorn
-
